@@ -1,0 +1,6 @@
+[submodule "external/qtpsd"]
+	path = external/qtpsd
+	url = https://github.com/signal-slot/qtpsd.git
+[submodule "external/qtmcp"]
+	path = external/qtmcp
+	url = https://github.com/signal-slot/qtmcp.git
