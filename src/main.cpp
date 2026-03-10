@@ -449,6 +449,24 @@ Build or preview to confirm the layout and interactions work correctly.
         config.fontScaleFactor = opts["fontScaleFactor"_L1].toDouble(1.0);
         config.imageScaling = opts["imageScaling"_L1].toBool(false);
         config.makeCompact = opts["makeCompact"_L1].toBool(false);
+        config.artboardToOrigin = opts["artboardToOrigin"_L1].toBool(false);
+        if (opts.contains("licenseText"_L1))
+            config.licenseText = opts["licenseText"_L1].toString();
+
+        // Set plugin-specific properties (e.g. effectMode for QtQuick)
+        if (opts.contains("effectMode"_L1)) {
+            const auto mode = opts["effectMode"_L1].toString();
+            // Map string to enum via Qt meta-object
+            const auto *mo = plugin->metaObject();
+            int propIndex = mo->indexOfProperty("effectMode");
+            if (propIndex >= 0) {
+                const auto prop = mo->property(propIndex);
+                const auto enumerator = prop.enumerator();
+                int enumValue = enumerator.keyToValue(mode.toLatin1().constData());
+                if (enumValue >= 0)
+                    plugin->setProperty("effectMode", enumValue);
+            }
+        }
 
         if (!plugin->exportTo(&exporterModel, outputDir, config))
             return toJson(QJsonObject{{"error"_L1, "Export failed"_L1}});
@@ -611,7 +629,7 @@ Build or preview to confirm the layout and interactions work correctly.
             {"do_export"_L1, "Export the loaded design to a target format and directory"_L1},
             {"do_export/format"_L1, "Exporter plugin key (use list_exporters to see available ones)"_L1},
             {"do_export/outputDir"_L1, "Absolute path to the output directory"_L1},
-            {"do_export/options"_L1, "JSON object with optional keys: width (int), height (int), fontScaleFactor (double), imageScaling (bool), makeCompact (bool). Width/height 0 or omitted = original size"_L1},
+            {"do_export/options"_L1, "JSON object with optional keys: width (int), height (int), fontScaleFactor (double), imageScaling (bool), makeCompact (bool), artboardToOrigin (bool, shift artboard to 0,0), licenseText (string, license header for generated files), effectMode (string: NoGPU, Qt5Effects, EffectMaker — QtQuick exporter only, controls how visual effects like drop shadows are rendered). Width/height 0 or omitted = original size"_L1},
 
             {"list_exporters"_L1, "List all available exporter plugins"_L1},
 
