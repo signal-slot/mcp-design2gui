@@ -22,6 +22,10 @@ jobs:
       contents: write
 
     steps:
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -57,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.os == 'Windows' && 'C:/qt-static' || '~/qt-static' }}
-          key: qt-static-6.8.2-${{ matrix.os }}-v1
+          key: qt-static-6.8.2-${{ matrix.os }}-v2
 
       - name: Download Qt source
         if: steps.cache-qt.outputs.cache-hit != 'true'
@@ -71,7 +75,7 @@ jobs:
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
           cd qtbase-everywhere-src-6.8.2
-          ./configure -static -release -prefix $HOME/qt-static \
+          ./configure -developer-build -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples -xcb \
             -- -DFEATURE_cxx20=ON
           cmake --build . --parallel $(nproc)
@@ -81,7 +85,7 @@ jobs:
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: |
           cd qtbase-everywhere-src-6.8.2
-          ./configure -static -release -prefix $HOME/qt-static \
+          ./configure -developer-build -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples \
             -- -DCMAKE_OSX_ARCHITECTURES=arm64 -DFEATURE_cxx20=ON
           cmake --build . --parallel $(sysctl -n hw.ncpu)
@@ -92,7 +96,7 @@ jobs:
         shell: cmd
         run: |
           cd qtbase-everywhere-src-6.8.2
-          CALL configure.bat -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON
+          CALL configure.bat -developer-build -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON
           cmake --build . --parallel
           cmake --install .
 
