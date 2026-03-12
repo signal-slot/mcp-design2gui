@@ -21,6 +21,10 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      QT_VERSION: '6.10.2'
+      QT_MAJOR_MINOR: '6.10'
+
     steps:
       - name: Enable long paths (Windows)
         if: runner.os == 'Windows'
@@ -61,74 +65,53 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.os == 'Windows' && 'C:/qt-static' || '~/qt-static' }}
-          key: qt-static-6.8.2-${{ matrix.os }}-v4
+          key: qt-static-${{ env.QT_VERSION }}-${{ matrix.os }}-v1
 
       - name: Download Qt source
         if: steps.cache-qt.outputs.cache-hit != 'true'
         shell: bash
         run: |
           curl -L -o qtbase.tar.xz \
-            https://download.qt.io/official_releases/qt/6.8/6.8.2/submodules/qtbase-everywhere-src-6.8.2.tar.xz
+            https://download.qt.io/official_releases/qt/${QT_MAJOR_MINOR}/${QT_VERSION}/submodules/qtbase-everywhere-src-${QT_VERSION}.tar.xz
           tar xf qtbase.tar.xz
 
       - name: Build static Qt (Linux)
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
-          cd qtbase-everywhere-src-6.8.2
+          cd qtbase-everywhere-src-${QT_VERSION}
           ./configure -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples -xcb \
-            -- -DFEATURE_cxx20=ON -DFEATURE_developer_build=ON
+            -- -DFEATURE_cxx20=ON
           cmake --build . --parallel $(nproc)
           cmake --install .
-          # Qt 6.8 does not install *Private cmake configs for public modules
-          # to the prefix. Copy them from the build tree.
-          for dir in lib/cmake/Qt6*Private; do
-            name=$(basename "$dir")
-            if [ -d "$dir" ] && [ ! -d "$HOME/qt-static/lib/cmake/$name" ]; then
-              cp -r "$dir" "$HOME/qt-static/lib/cmake/"
-            fi
-          done
 
       - name: Build static Qt (macOS)
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: |
-          cd qtbase-everywhere-src-6.8.2
+          cd qtbase-everywhere-src-${QT_VERSION}
           ./configure -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples \
-            -- -DCMAKE_OSX_ARCHITECTURES=arm64 -DFEATURE_cxx20=ON -DFEATURE_developer_build=ON
+            -- -DCMAKE_OSX_ARCHITECTURES=arm64 -DFEATURE_cxx20=ON
           cmake --build . --parallel $(sysctl -n hw.ncpu)
           cmake --install .
-          for dir in lib/cmake/Qt6*Private; do
-            name=$(basename "$dir")
-            if [ -d "$dir" ] && [ ! -d "$HOME/qt-static/lib/cmake/$name" ]; then
-              cp -r "$dir" "$HOME/qt-static/lib/cmake/"
-            fi
-          done
 
       - name: Build static Qt (Windows)
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        shell: bash
+        shell: cmd
         run: |
-          cd qtbase-everywhere-src-6.8.2
-          cmd //c "configure.bat -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON -DFEATURE_developer_build=ON"
+          cd qtbase-everywhere-src-%QT_VERSION%
+          CALL configure.bat -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON
           cmake --build . --parallel
           cmake --install .
-          for dir in lib/cmake/Qt6*Private; do
-            name=$(basename "$dir")
-            if [ -d "$dir" ] && [ ! -d "C:/qt-static/lib/cmake/$name" ]; then
-              cp -r "$dir" "C:/qt-static/lib/cmake/"
-            fi
-          done
 
       - name: Align submodule Qt versions
         shell: bash
         run: |
-          QT_VER=6.8.2
           if [ "$RUNNER_OS" = "macOS" ]; then
-            sed -i '' "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VER}\"/" \
+            sed -i '' "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VERSION}\"/" \
               external/qtmcp/.cmake.conf external/qtpsd/.cmake.conf
           else
-            sed -i "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VER}\"/" \
+            sed -i "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VERSION}\"/" \
               external/qtmcp/.cmake.conf external/qtpsd/.cmake.conf
           fi
 
