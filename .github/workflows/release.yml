@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.os == 'Windows' && 'C:/qt-static' || '~/qt-static' }}
-          key: qt-static-6.8.2-${{ matrix.os }}-v2
+          key: qt-static-6.8.2-${{ matrix.os }}-v3
 
       - name: Download Qt source
         if: steps.cache-qt.outputs.cache-hit != 'true'
@@ -75,9 +75,9 @@ jobs:
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
           cd qtbase-everywhere-src-6.8.2
-          ./configure -developer-build -static -release -prefix $HOME/qt-static \
+          ./configure -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples -xcb \
-            -- -DFEATURE_cxx20=ON
+            -- -DFEATURE_cxx20=ON -DFEATURE_developer_build=ON
           cmake --build . --parallel $(nproc)
           cmake --install .
 
@@ -85,9 +85,9 @@ jobs:
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: |
           cd qtbase-everywhere-src-6.8.2
-          ./configure -developer-build -static -release -prefix $HOME/qt-static \
+          ./configure -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples \
-            -- -DCMAKE_OSX_ARCHITECTURES=arm64 -DFEATURE_cxx20=ON
+            -- -DCMAKE_OSX_ARCHITECTURES=arm64 -DFEATURE_cxx20=ON -DFEATURE_developer_build=ON
           cmake --build . --parallel $(sysctl -n hw.ncpu)
           cmake --install .
 
@@ -96,9 +96,24 @@ jobs:
         shell: cmd
         run: |
           cd qtbase-everywhere-src-6.8.2
-          CALL configure.bat -developer-build -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON
+          CALL configure.bat -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON -DFEATURE_developer_build=ON
           cmake --build . --parallel
           cmake --install .
+
+      - name: Debug Qt install
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            QT_DIR="C:/qt-static"
+          else
+            QT_DIR="$HOME/qt-static"
+          fi
+          echo "=== Listing cmake dirs ==="
+          ls "$QT_DIR/lib/cmake/" || true
+          echo "=== Looking for CorePrivate ==="
+          find "$QT_DIR" -name "*CorePrivate*" 2>/dev/null || true
+          echo "=== Looking for BuildInternals ==="
+          find "$QT_DIR" -name "*BuildInternals*" -type f 2>/dev/null | head -5 || true
 
       - name: Align submodule Qt versions
         shell: bash
