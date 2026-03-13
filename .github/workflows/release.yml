@@ -185,6 +185,14 @@ jobs:
               external/qtmcp/.cmake.conf external/qtpsd/.cmake.conf
           fi
 
+      - name: Skip qtpsd apps for static build
+        shell: bash
+        run: |
+          # qtpsd apps (psdexporter, figma2png) require Q_IMPORT_PLUGIN for
+          # static builds and depend on Qt::Widgets — skip them since we only
+          # need the libraries and plugins
+          echo "# Skipped for static build" > external/qtpsd/src/apps/CMakeLists.txt
+
       - name: Build
         shell: bash
         run: |
