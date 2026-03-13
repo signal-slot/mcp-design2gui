@@ -21,6 +21,7 @@ set(DEPS_CMAKE_DIR "${DEPS_INSTALL_PREFIX}/${QT_LIB_DIR_NAME}/cmake")
 
 ExternalProject_Add(ep_qtpsd
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/qtpsd"
+    BINARY_DIR "${CMAKE_BINARY_DIR}/psd"
     CMAKE_ARGS
         -DCMAKE_TOOLCHAIN_FILE=${QT_TOOLCHAIN_FILE}
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
@@ -33,6 +34,7 @@ ExternalProject_Add(ep_qtpsd
 
 ExternalProject_Add(ep_qtmcp
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/qtmcp"
+    BINARY_DIR "${CMAKE_BINARY_DIR}/mcp"
     CMAKE_ARGS
         -DCMAKE_TOOLCHAIN_FILE=${QT_TOOLCHAIN_FILE}
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
