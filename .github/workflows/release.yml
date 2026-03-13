@@ -21,10 +21,6 @@ jobs:
     permissions:
       contents: write
 
-    env:
-      QT_VERSION: '6.10.2'
-      QT_MAJOR_MINOR: '6.10'
-
     steps:
       - name: Enable long paths (Windows)
         if: runner.os == 'Windows'
@@ -65,20 +61,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.os == 'Windows' && 'C:/qt-static' || '~/qt-static' }}
-          key: qt-static-${{ env.QT_VERSION }}-${{ matrix.os }}-v1
+          key: qt-static-6.8.2-${{ matrix.os }}-v5
 
       - name: Download Qt source
         if: steps.cache-qt.outputs.cache-hit != 'true'
         shell: bash
         run: |
           curl -L -o qtbase.tar.xz \
-            https://download.qt.io/official_releases/qt/${QT_MAJOR_MINOR}/${QT_VERSION}/submodules/qtbase-everywhere-src-${QT_VERSION}.tar.xz
+            https://download.qt.io/official_releases/qt/6.8/6.8.2/submodules/qtbase-everywhere-src-6.8.2.tar.xz
           tar xf qtbase.tar.xz
 
       - name: Build static Qt (Linux)
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: |
-          cd qtbase-everywhere-src-${QT_VERSION}
+          cd qtbase-everywhere-src-6.8.2
           ./configure -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples -xcb \
             -- -DFEATURE_cxx20=ON
@@ -88,7 +84,7 @@ jobs:
       - name: Build static Qt (macOS)
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: |
-          cd qtbase-everywhere-src-${QT_VERSION}
+          cd qtbase-everywhere-src-6.8.2
           ./configure -static -release -prefix $HOME/qt-static \
             -nomake tests -nomake examples \
             -- -DCMAKE_OSX_ARCHITECTURES=arm64 -DFEATURE_cxx20=ON
@@ -99,19 +95,93 @@ jobs:
         if: steps.cache-qt.outputs.cache-hit != 'true' && runner.os == 'Windows'
         shell: cmd
         run: |
-          cd qtbase-everywhere-src-%QT_VERSION%
+          cd qtbase-everywhere-src-6.8.2
           CALL configure.bat -static -release -prefix C:\qt-static -nomake tests -nomake examples -- -DFEATURE_cxx20=ON
           cmake --build . --parallel
           cmake --install .
 
+      - name: Generate Qt6CorePrivate cmake stub
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          QT_VER=6.8.2
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            QT_DIR="C:/qt-static"
+          else
+            QT_DIR="$HOME/qt-static"
+          fi
+          PRIV_DIR="$QT_DIR/lib/cmake/Qt6CorePrivate"
+          mkdir -p "$PRIV_DIR"
+
+          # Find private headers include path
+          PRIV_INC=""
+          for candidate in \
+            "$QT_DIR/include/QtCore/$QT_VER" \
+            "$QT_DIR/lib/QtCore.framework/Versions/A/Headers/$QT_VER"; do
+            if [ -d "$candidate" ]; then
+              PRIV_INC="$candidate"
+              break
+            fi
+          done
+
+          cat > "$PRIV_DIR/Qt6CorePrivateConfig.cmake" << 'ENDCMAKE'
+          cmake_minimum_required(VERSION 3.16)
+          include(CMakeFindDependencyMacro)
+          if(NOT TARGET Qt6::Core)
+              find_dependency(Qt6Core)
+          endif()
+          set(Qt6CorePrivate_FOUND TRUE)
+          if(NOT TARGET Qt6::CorePrivate)
+              include("${CMAKE_CURRENT_LIST_DIR}/Qt6CorePrivateTargets.cmake")
+          endif()
+          ENDCMAKE
+
+          cat > "$PRIV_DIR/Qt6CorePrivateTargets.cmake" << ENDCMAKE
+          add_library(Qt6::CorePrivate INTERFACE IMPORTED)
+          set_target_properties(Qt6::CorePrivate PROPERTIES
+              INTERFACE_LINK_LIBRARIES "Qt6::Core"
+              _qt_is_private_module TRUE
+              _qt_public_module_target_name "Qt6::Core"
+              _qt_package_name "Qt6CorePrivate"
+          )
+          if(EXISTS "$PRIV_INC")
+              set_property(TARGET Qt6::CorePrivate APPEND PROPERTY
+                  INTERFACE_INCLUDE_DIRECTORIES "$PRIV_INC")
+          endif()
+          ENDCMAKE
+
+          cat > "$PRIV_DIR/Qt6CorePrivateConfigVersion.cmake" << ENDCMAKE
+          set(PACKAGE_VERSION "$QT_VER")
+          if(PACKAGE_FIND_VERSION_RANGE)
+              if(PACKAGE_FIND_VERSION_RANGE_MIN STREQUAL "INCLUDE"
+                  AND PACKAGE_VERSION VERSION_GREATER_EQUAL PACKAGE_FIND_VERSION_MIN
+                  AND PACKAGE_VERSION VERSION_LESS_EQUAL PACKAGE_FIND_VERSION_RANGE_MAX)
+                  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+              else()
+                  set(PACKAGE_VERSION_COMPATIBLE FALSE)
+              endif()
+          elseif(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
+              set(PACKAGE_VERSION_COMPATIBLE TRUE)
+              set(PACKAGE_VERSION_EXACT TRUE)
+          elseif(PACKAGE_FIND_VERSION VERSION_LESS PACKAGE_VERSION)
+              set(PACKAGE_VERSION_COMPATIBLE TRUE)
+          else()
+              set(PACKAGE_VERSION_COMPATIBLE FALSE)
+          endif()
+          ENDCMAKE
+
+          echo "Generated Qt6CorePrivate stub in $PRIV_DIR"
+          ls -la "$PRIV_DIR/"
+
       - name: Align submodule Qt versions
         shell: bash
         run: |
+          QT_VER=6.8.2
           if [ "$RUNNER_OS" = "macOS" ]; then
-            sed -i '' "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VERSION}\"/" \
+            sed -i '' "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VER}\"/" \
               external/qtmcp/.cmake.conf external/qtpsd/.cmake.conf
           else
-            sed -i "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VERSION}\"/" \
+            sed -i "s/QT_REPO_MODULE_VERSION \"[^\"]*\"/QT_REPO_MODULE_VERSION \"${QT_VER}\"/" \
               external/qtmcp/.cmake.conf external/qtpsd/.cmake.conf
           fi
 
