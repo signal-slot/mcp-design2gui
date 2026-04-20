@@ -120,6 +120,13 @@ set_export_hint(layerId=..., type="embed", options='{"id": "buttonName", "baseEl
 set_export_hint(layerId=..., type="embed", options='{"id": "labelName"}')
 ```
 
+**Anchored elements (parent-relative positioning instead of absolute x/y):**
+```
+set_export_hint(layerId=..., type="embed", options='{"id": "elementName", "anchorMode": "center"}')
+```
+Anchor modes: `none`, `topLeft`, `top`, `topRight`, `left`, `center`, `right`, `bottomLeft`, `bottom`, `bottomRight`.
+Note: `anchorMode` and the `position` property are mutually exclusive.
+
 ### 4. Save hints
 
 ```
@@ -364,6 +371,8 @@ Build or preview to confirm the layout and interactions work correctly.
                 propsArr.append(prop);
             hintObj["properties"_L1] = propsArr;
         }
+        if (hint.anchorMode != QPsdExporterTreeItemModel::ExportHint::AnchorNone)
+            hintObj["anchorMode"_L1] = anchorModeName(hint.anchorMode);
         obj["exportHint"_L1] = hintObj;
 
         return toJson(obj);
@@ -407,6 +416,21 @@ Build or preview to confirm the layout and interactions work correctly.
             for (const auto &val : propsArr)
                 hint.properties.insert(val.toString());
         }
+        if (opts.contains("anchorMode"_L1)) {
+            static const QHash<QString, QPsdExporterTreeItemModel::ExportHint::AnchorMode> anchorMap = {
+                {"none"_L1,        QPsdExporterTreeItemModel::ExportHint::AnchorNone},
+                {"topLeft"_L1,     QPsdExporterTreeItemModel::ExportHint::AnchorTopLeft},
+                {"top"_L1,         QPsdExporterTreeItemModel::ExportHint::AnchorTop},
+                {"topRight"_L1,    QPsdExporterTreeItemModel::ExportHint::AnchorTopRight},
+                {"left"_L1,        QPsdExporterTreeItemModel::ExportHint::AnchorLeft},
+                {"center"_L1,      QPsdExporterTreeItemModel::ExportHint::AnchorCenter},
+                {"right"_L1,       QPsdExporterTreeItemModel::ExportHint::AnchorRight},
+                {"bottomLeft"_L1,  QPsdExporterTreeItemModel::ExportHint::AnchorBottomLeft},
+                {"bottom"_L1,      QPsdExporterTreeItemModel::ExportHint::AnchorBottom},
+                {"bottomRight"_L1, QPsdExporterTreeItemModel::ExportHint::AnchorBottomRight},
+            };
+            hint.anchorMode = anchorMap.value(opts["anchorMode"_L1].toString(), QPsdExporterTreeItemModel::ExportHint::AnchorNone);
+        }
 
         exporterModel.setLayerHint(index, hint);
 
@@ -421,6 +445,7 @@ Build or preview to confirm the layout and interactions work correctly.
             {"baseElement"_L1, QPsdExporterTreeItemModel::ExportHint::nativeCode2Name(hint.baseElement)},
             {"visible"_L1, hint.visible},
             {"properties"_L1, propsArr},
+            {"anchorMode"_L1, anchorModeName(hint.anchorMode)},
         });
     }
 
@@ -624,7 +649,7 @@ Build or preview to confirm the layout and interactions work correctly.
             {"set_export_hint"_L1, "Configure how a layer should be exported"_L1},
             {"set_export_hint/layerId"_L1, "Layer ID to configure"_L1},
             {"set_export_hint/type"_L1, "Export type: embed, merge, custom, native, skip"_L1},
-            {"set_export_hint/options"_L1, "JSON object with optional keys: id (string, identifier for binding — empty string to clear), visible (bool), componentName (string, for custom type), baseElement (string: Container, TouchArea, Button, Button_Highlighted, for native type), properties (array of strings: visible, color, position, text, size, image — controls which attributes are exported as bindable properties)"_L1},
+            {"set_export_hint/options"_L1, "JSON object with optional keys: id (string, identifier for binding — empty string to clear), visible (bool), componentName (string, for custom type), baseElement (string: Container, TouchArea, Button, Button_Highlighted, for native type), properties (array of strings: visible, color, position, text, size, image — controls which attributes are exported as bindable properties), anchorMode (string: none, topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight — parent-relative positioning; mutually exclusive with position property)"_L1},
 
             {"do_export"_L1, "Export the loaded design to a target format and directory"_L1},
             {"do_export/format"_L1, "Exporter plugin key (use list_exporters to see available ones)"_L1},
@@ -771,6 +796,16 @@ private:
     {
         static const char *names[] = {"embed", "merge", "custom", "native", "skip"};
         return QString::fromLatin1(names[t]);
+    }
+
+    static QString anchorModeName(QPsdExporterTreeItemModel::ExportHint::AnchorMode m)
+    {
+        static const char *names[] = {
+            "none", "topLeft", "top", "topRight",
+            "left", "center", "right",
+            "bottomLeft", "bottom", "bottomRight"
+        };
+        return QString::fromLatin1(names[m]);
     }
 
     // Recursively compute the bounding box of all child layers under `parent`

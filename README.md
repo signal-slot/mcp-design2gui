@@ -39,6 +39,7 @@ An MCP (Model Context Protocol) server for inspecting and exporting design files
   - `componentName` (string) — component name for `custom` type
   - `baseElement` (string) — `Container`, `TouchArea`, `Button`, or `Button_Highlighted` for `native` type
   - `properties` (array of strings) — bindable attributes: `visible`, `color`, `position`, `text`, `size`, `image`
+  - `anchorMode` (string) — parent-relative positioning: `none`, `topLeft`, `top`, `topRight`, `left`, `center`, `right`, `bottomLeft`, `bottom`, `bottomRight` (mutually exclusive with `position` property)
 
 ### do_export
 
