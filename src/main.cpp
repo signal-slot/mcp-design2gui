@@ -959,7 +959,15 @@ int main(int argc, char *argv[])
                                     "address"_L1, "127.0.0.1:8000"_L1);
     parser.addOption(addressOption);
 
+    QCommandLineOption apiKeyOption(QStringList() << "k"_L1 << "api-key"_L1,
+                                    "Figma API key (sets FIGMA_API_KEY)."_L1,
+                                    "key"_L1);
+    parser.addOption(apiKeyOption);
+
     parser.process(app);
+
+    if (parser.isSet(apiKeyOption))
+        qputenv("FIGMA_API_KEY", parser.value(apiKeyOption).toUtf8());
 
     McpServer server(parser.value(backendOption));
     QObject::connect(&server, &QMcpServer::finished, &app, &QCoreApplication::quit);
