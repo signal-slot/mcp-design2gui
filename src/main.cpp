@@ -465,12 +465,15 @@ Build or preview to confirm the layout and interactions work correctly.
             return toJson(QJsonObject{{"error"_L1, u"Cannot create directory: %1"_s.arg(outputDir)}});
 
         const auto opts = QJsonDocument::fromJson(options.toUtf8()).object();
-        const auto sz = exporterModel.size();
-        const int w = opts["width"_L1].toInt(0) > 0 ? opts["width"_L1].toInt() : sz.width();
-        const int h = opts["height"_L1].toInt(0) > 0 ? opts["height"_L1].toInt() : sz.height();
+        const int optW = opts["width"_L1].toInt(0);
+        const int optH = opts["height"_L1].toInt(0);
 
         QPsdExporterPlugin::ExportConfig config;
-        config.targetSize = QSize(w, h);
+        if (optW > 0 || optH > 0) {
+            const auto sz = exporterModel.size();
+            config.targetSize = QSize(optW > 0 ? optW : sz.width(),
+                                     optH > 0 ? optH : sz.height());
+        }
         config.fontScaleFactor = opts["fontScaleFactor"_L1].toDouble(1.0);
         config.imageScaling = opts["imageScaling"_L1].toBool(false);
         config.makeCompact = opts["makeCompact"_L1].toBool(false);
@@ -496,11 +499,14 @@ Build or preview to confirm the layout and interactions work correctly.
         if (!plugin->exportTo(&exporterModel, outputDir, config))
             return toJson(QJsonObject{{"error"_L1, "Export failed"_L1}});
 
+        const QSize reported = config.targetSize.isEmpty()
+            ? exporterModel.size()
+            : config.targetSize;
         return toJson(QJsonObject{
             {"format"_L1, format},
             {"outputDir"_L1, outputDir},
-            {"width"_L1, w},
-            {"height"_L1, h},
+            {"width"_L1, reported.width()},
+            {"height"_L1, reported.height()},
         });
     }
 
