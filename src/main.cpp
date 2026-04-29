@@ -130,6 +130,11 @@ set_export_hint(layerId=..., type="embed", options='{"id": "btnSettings", "baseE
 set_export_hint(layerId=..., type="embed", options='{"id": "labelName"}')
 ```
 
+**Translatable text** — for any user-visible string that should go through the framework's translation pipeline, add `translatable` to `properties`. The QtQuick exporter then emits `text: qsTr("Hello")` and the Slint exporter emits `text: @tr("Hello")` instead of plain string literals (also applies to merged-text on `type: "native"` Buttons):
+```
+set_export_hint(layerId=..., type="embed", options='{"id": "labelName", "properties": ["text", "translatable"]}')
+```
+
 **Anchored elements (parent-relative positioning instead of absolute x/y):**
 ```
 set_export_hint(layerId=..., type="embed", options='{"id": "elementName", "anchorMode": "center"}')
@@ -692,7 +697,7 @@ Build or preview to confirm the layout and interactions work correctly.
                                             "Container (Item), TouchArea (MouseArea), Button, Button_Highlighted, "
                                             "CheckBox, ComboBox, RadioButton, Slider, SpinBox, Switch, TabBar, TabButton. "
                                             "Prefer type=native+baseElement whenever a Figma node corresponds to a stock UI control (toggle, dropdown, tab segment, numeric stepper, etc.) — let the design's visuals live in a Qt Quick Controls 2 style module activated via QQuickStyle::setStyle, instead of writing a type=custom wrapper that re-implements standard semantics like model/value/checked); "
-                                            "properties (array of strings: visible, color, position, text, size, image — controls which attributes are exported as bindable properties); "
+                                            "properties (array of strings: visible, color, position, text, size, image, translatable — controls which attributes are exported as bindable properties. translatable applies to Text layers only and wraps the literal in qsTr(\"...\") for QtQuick or @tr(\"...\") for Slint so it can be picked up by the framework's translation tooling); "
                                             "anchorMode (string: none, topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight — parent-relative positioning; mutually exclusive with the position property)"_L1},
 
             {"do_export"_L1, "Export the loaded design to a target format and directory"_L1},
