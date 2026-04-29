@@ -96,9 +96,10 @@ get_layer_tree()
 
 Review the child layers and classify them:
 
-- **Interactive elements (buttons, nav items, etc.)** - use `baseElement: "TouchArea"` to emit as a clickable area
-- **Text labels (dynamically updated)** - assign an `id` so they become property aliases
-- **Decorative elements** - no hint needed (exported by default)
+- **Stock UI controls (toggle, dropdown, tab segment, numeric stepper, button, etc.)** — the Figma node is *visually* a custom skin, but it's *semantically* a standard control. Use `type: "native"` with the matching `baseElement` (`Switch`, `ComboBox`, `TabBar` + `TabButton`, `SpinBox`, `Slider`, `CheckBox`, `RadioButton`, `Button`, `Button_Highlighted`). Re-skin the design's visuals via a Qt Quick Controls 2 style module activated by `QQuickStyle::setStyle("YourStyle")`. Do **not** wrap stock controls in `type: "custom"` components that re-implement standard semantics like `model` / `value` / `checked` — that throws away the framework's interaction logic and ages badly.
+- **Generic clickable areas (icons, sidebar tiles, hit-only regions)** — use `baseElement: "TouchArea"` to emit a `MouseArea`.
+- **Text labels (dynamically updated)** — assign an `id` so they become property aliases.
+- **Decorative elements** — no hint needed (exported by default).
 
 Use `get_layer_details(layerId=...)` to inspect individual layers for more detail (text runs, shape info, linked files, etc.).
 Use `get_layer_image(layerId=...)` to visually inspect a layer's rendered appearance.
@@ -110,9 +111,18 @@ Use `get_layer_image(layerId=...)` to visually inspect a layer's rendered appear
 set_export_hint(layerId=..., type="custom", options='{"componentName": "ScreenName"}')
 ```
 
-**Interactive elements (buttons, navigation, etc.):**
+**Stock UI controls (preferred for anything semantically standard):**
 ```
-set_export_hint(layerId=..., type="embed", options='{"id": "buttonName", "baseElement": "TouchArea"}')
+set_export_hint(layerId=..., type="native", options='{"id": "wifiToggle", "baseElement": "Switch"}')
+set_export_hint(layerId=..., type="native", options='{"id": "signalSource", "baseElement": "ComboBox"}')
+set_export_hint(layerId=..., type="native", options='{"id": "triggerMode", "baseElement": "TabBar"}')
+set_export_hint(layerId=..., type="native", options='{"id": "alertLevel", "baseElement": "SpinBox"}')
+```
+The exporter then emits e.g. `Switch { id: wifiToggle; ... }` with the standard QtQuick.Controls API (`checked`, `model`, `value`, `currentIndex`, ...). Restyle with a custom `QQuickStyle` module rather than wrapping it.
+
+**Generic clickable areas (icons, hit-only regions):**
+```
+set_export_hint(layerId=..., type="embed", options='{"id": "btnSettings", "baseElement": "TouchArea"}')
 ```
 
 **Text labels:**
@@ -182,6 +192,25 @@ For simple design-only components (buttons, icons, etc.) that need no logic wrap
 ```
 ButtonPower 1.0 design/ButtonPower.ui.qml
 ```
+
+**Re-skinning native controls** — when the export uses `type:"native"`, the generated `.ui.qml` references stock `QtQuick.Controls` types (`Switch`, `ComboBox`, etc.). Restyle them by adding a Qt Quick Controls 2 style module:
+
+```
+qml/MyStyle/             # one .qml per type (Switch.qml, ComboBox.qml, ...)
+  Switch.qml             # uses T.Switch from QtQuick.Templates, draws the design's PNG assets
+  ComboBox.qml
+  qmldir                 # `module MyStyle` + lines like `Switch 1.0 Switch.qml`
+```
+
+In `main.cpp`, activate the style before loading QML:
+
+```cpp
+#include <QQuickStyle>
+...
+QQuickStyle::setStyle("MyStyle");
+```
+
+This keeps the design files re-exportable and lets the standard control APIs (`model`, `value`, `checked`, `currentIndex`, ...) drive the runtime — no custom wrappers needed.
 
 ### 7. Verify
 
@@ -654,8 +683,17 @@ Build or preview to confirm the layout and interactions work correctly.
 
             {"set_export_hint"_L1, "Configure how a layer should be exported"_L1},
             {"set_export_hint/layerId"_L1, "Layer ID to configure"_L1},
-            {"set_export_hint/type"_L1, "Export type: embed, merge, custom, native, skip"_L1},
-            {"set_export_hint/options"_L1, "JSON object with optional keys: id (string, identifier for binding — empty string to clear), visible (bool), componentName (string, for custom type), baseElement (string: Container, TouchArea, Button, Button_Highlighted, for native type), properties (array of strings: visible, color, position, text, size, image — controls which attributes are exported as bindable properties), anchorMode (string: none, topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight — parent-relative positioning; mutually exclusive with position property)"_L1},
+            {"set_export_hint/type"_L1, "Export type: embed (inline into the parent .ui.qml), merge (composite into a single image), custom (emit a separate reusable component — name it via componentName), native (emit a stock framework control — pick the type via baseElement), skip (omit from export)"_L1},
+            {"set_export_hint/options"_L1, "JSON object with optional keys: "
+                                            "id (string, identifier for binding — empty string to clear); "
+                                            "visible (bool); "
+                                            "componentName (string, for type=custom — name of the generated reusable component); "
+                                            "baseElement (string, for type=native — stock framework control. The QtQuick exporter maps each value to a QtQuick or QtQuick.Controls type: "
+                                            "Container (Item), TouchArea (MouseArea), Button, Button_Highlighted, "
+                                            "CheckBox, ComboBox, RadioButton, Slider, SpinBox, Switch, TabBar, TabButton. "
+                                            "Prefer type=native+baseElement whenever a Figma node corresponds to a stock UI control (toggle, dropdown, tab segment, numeric stepper, etc.) — let the design's visuals live in a Qt Quick Controls 2 style module activated via QQuickStyle::setStyle, instead of writing a type=custom wrapper that re-implements standard semantics like model/value/checked); "
+                                            "properties (array of strings: visible, color, position, text, size, image — controls which attributes are exported as bindable properties); "
+                                            "anchorMode (string: none, topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight — parent-relative positioning; mutually exclusive with the position property)"_L1},
 
             {"do_export"_L1, "Export the loaded design to a target format and directory"_L1},
             {"do_export/format"_L1, "Exporter plugin key (use list_exporters to see available ones)"_L1},
