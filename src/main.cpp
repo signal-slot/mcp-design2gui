@@ -96,8 +96,10 @@ get_layer_tree()
 
 Review the child layers and classify them:
 
+- **Screen-level frames (each visible screen / route)** — every top-level frame that represents a distinct screen (Home, Settings, DeviceList, ...) must be its own reusable component. Mark each one `type: "custom"` with a `componentName` derived from the screen's *role* in PascalCase. **Never** leave them as the default embed — that produces one giant `MainScreen.ui.qml` containing every screen inlined together.
+- **Reusable widgets that repeat (cards, list rows, custom toggles you'll instantiate many times)** — also `type: "custom"` with a role-based `componentName`.
 - **Stock UI controls (toggle, dropdown, tab segment, numeric stepper, button, etc.)** — the Figma node is *visually* a custom skin, but it's *semantically* a standard control. Use `type: "native"` with the matching `baseElement` (`Switch`, `ComboBox`, `TabBar` + `TabButton`, `SpinBox`, `Slider`, `CheckBox`, `RadioButton`, `Button`, `Button_Highlighted`). Re-skin the design's visuals via a Qt Quick Controls 2 style module activated by `QQuickStyle::setStyle("YourStyle")`. Do **not** wrap stock controls in `type: "custom"` components that re-implement standard semantics like `model` / `value` / `checked` — that throws away the framework's interaction logic and ages badly.
-- **Generic clickable areas (icons, sidebar tiles, hit-only regions)** — use `baseElement: "TouchArea"` to emit a `MouseArea`.
+- **Generic tappable regions (icons, sidebar tiles, list rows, any layer that should react to touch)** — use `baseElement: "TouchArea"` so the exporter emits a `MouseArea` *inside* the `.ui.qml` with a stable `id`. **Never** plan to overlay a `MouseArea` from the logic wrapper to make something tappable — every hit area lives in the design layer and is re-export-stable.
 - **Text labels (dynamically updated)** — assign an `id` so they become property aliases.
 - **Decorative elements** — no hint needed (exported by default).
 
@@ -106,12 +108,23 @@ Use `get_layer_image(layerId=...)` to visually inspect a layer's rendered appear
 
 ### 3. Set export hints
 
-**Root artboard (top-level folder):**
-```
-set_export_hint(layerId=..., type="custom", options='{"componentName": "ScreenName"}')
-```
+#### Naming rules (apply to every `id` and `componentName`)
 
-**Stock UI controls (preferred for anything semantically standard):**
+- Derive names from the layer's **role** in the UI, not from its position in the tree. A toggle that controls Wi-Fi is `wifiToggle` / `WifiToggle`, never `toggle1` / `Switch2`.
+- `componentName`: PascalCase, ends with the role noun (`HomeScreen`, `DeviceCard`, `VolumeSlider`).
+- `id`: camelCase, role-based (`wifiToggle`, `signalSource`, `btnSettings`).
+- **Forbidden:** numeric suffixes used as a substitute for naming (`Screen1`, `Screen2`, `btn1`, `label3`). If two siblings genuinely share a role, the design itself needs disambiguation — ask before falling back to numbers.
+- The placeholder `ScreenName` in the examples below is **not** a name to copy verbatim; replace it with the actual role.
+
+#### Each screen / reusable component
+```
+set_export_hint(layerId=..., type="custom", options='{"componentName": "HomeScreen"}')
+set_export_hint(layerId=..., type="custom", options='{"componentName": "SettingsScreen"}')
+set_export_hint(layerId=..., type="custom", options='{"componentName": "DeviceCard"}')
+```
+Do this for **every** screen frame and every repeated widget — one `type:"custom"` per generated `.ui.qml` file.
+
+#### Stock UI controls (preferred for anything semantically standard)
 ```
 set_export_hint(layerId=..., type="native", options='{"id": "wifiToggle", "baseElement": "Switch"}')
 set_export_hint(layerId=..., type="native", options='{"id": "signalSource", "baseElement": "ComboBox"}')
@@ -120,22 +133,42 @@ set_export_hint(layerId=..., type="native", options='{"id": "alertLevel", "baseE
 ```
 The exporter then emits e.g. `Switch { id: wifiToggle; ... }` with the standard QtQuick.Controls API (`checked`, `model`, `value`, `currentIndex`, ...). Restyle with a custom `QQuickStyle` module rather than wrapping it.
 
-**Generic clickable areas (icons, hit-only regions):**
+#### Buttons with a caption — use `textSource`, do not assign `text` from logic code
+
+When a Button has a sibling text layer that holds its caption, point the Button's hint at that layer with `textSource`. The exporter pulls the string straight into the generated control:
+
+```
+set_export_hint(layerId=<buttonLayerId>, type="native", options='{"id": "btnOk", "baseElement": "Button", "textSource": "OK Label"}')
+```
+
+`textSource` takes the *layer name* of a sibling text layer (visible via `get_layer_tree` / `get_layer_details`). The output becomes:
+
+```qml
+Button { id: btnOk; text: qsTr("OK") }   // QtQuick (with translatable, see below)
+```
+
+**Do not** leave the caption as a separate `embed` and assign `btnOk.text = ...` from the logic wrapper — that severs the design from the source: changing the caption in the design no longer reaches the running app without a code edit. Use `textSource` so re-export is the only step needed.
+
+`imageSource` works the same way for native controls that need an icon/background asset from a sibling image layer.
+
+#### Generic tappable regions (icons, hit-only areas)
 ```
 set_export_hint(layerId=..., type="embed", options='{"id": "btnSettings", "baseElement": "TouchArea"}')
 ```
+The `.ui.qml` then contains `MouseArea { id: btnSettings; ... }` — wire `btnSettings.onClicked: ...` from the logic wrapper. Do **not** attempt to add a `MouseArea` in the logic wrapper afterwards.
 
-**Text labels:**
+#### Text labels
 ```
-set_export_hint(layerId=..., type="embed", options='{"id": "labelName"}')
-```
-
-**Translatable text** — for any user-visible string that should go through the framework's translation pipeline, add `translatable` to `properties`. The QtQuick exporter then emits `text: qsTr("Hello")` and the Slint exporter emits `text: @tr("Hello")` instead of plain string literals (also applies to merged-text on `type: "native"` Buttons):
-```
-set_export_hint(layerId=..., type="embed", options='{"id": "labelName", "properties": ["text", "translatable"]}')
+set_export_hint(layerId=..., type="embed", options='{"id": "labelDeviceName"}')
 ```
 
-**Anchored elements (parent-relative positioning instead of absolute x/y):**
+#### Translatable text
+For any user-visible string that should go through the framework's translation pipeline, add `translatable` to `properties`. The QtQuick exporter then emits `text: qsTr("Hello")` and the Slint exporter emits `text: @tr("Hello")` instead of plain string literals (also applies to a Button's `textSource` layer):
+```
+set_export_hint(layerId=..., type="embed", options='{"id": "labelDeviceName", "properties": ["text", "translatable"]}')
+```
+
+#### Anchored elements (parent-relative positioning instead of absolute x/y)
 ```
 set_export_hint(layerId=..., type="embed", options='{"id": "elementName", "anchorMode": "center"}')
 ```
@@ -158,6 +191,8 @@ do_export(format="{format}", outputDir=".", options='{}')
 
 If `{format}` is empty, call `list_exporters` to see available formats and ask the user to choose one.
 
+After export, confirm there is **one `.ui.qml` per screen frame** (e.g. `HomeScreen.ui.qml`, `SettingsScreen.ui.qml`). A single oversized file means a `type:"custom"` hint is missing somewhere — go back to step 3.
+
 ### 6. Integrate generated files
 
 Use a **design/logic separation** pattern to keep exported files re-exportable while developing logic independently.
@@ -166,32 +201,57 @@ Use a **design/logic separation** pattern to keep exported files re-exportable w
 ```
 qml/
   design/     # Exported .ui.qml files (never hand-edit)
-    ScreenName.ui.qml
+    HomeScreen.ui.qml
+    SettingsScreen.ui.qml
   logic/      # Logic wrappers
-    ScreenName.qml
+    HomeScreen.qml
+    SettingsScreen.qml
   qmldir      # Type registration
 ```
 
-**qmldir** registers the design file with a `UI` suffix and the logic file as the public type:
+**qmldir** registers each design file with a `UI` suffix and the logic file as the public type:
 ```
-ScreenNameUI 1.0 design/ScreenName.ui.qml
-ScreenName   1.0 logic/ScreenName.qml
+HomeScreenUI     1.0 design/HomeScreen.ui.qml
+HomeScreen       1.0 logic/HomeScreen.qml
+SettingsScreenUI 1.0 design/SettingsScreen.ui.qml
+SettingsScreen   1.0 logic/SettingsScreen.qml
 ```
 
-**Logic wrapper** (`logic/ScreenName.qml`) inherits from the design type:
+**Logic wrapper** (`logic/HomeScreen.qml`) inherits from the design type and wires behavior **declaratively only**:
 ```qml
-ScreenNameUI {
-    // Bind property aliases exposed by the design file
-    labelName.text: root.someValue
-    buttonName.onClicked: doSomething()
+HomeScreenUI {
+    // Property bindings — never imperative assignment
+    labelDeviceName.text: device.name
+    wifiToggle.checked: network.wifiOn
+
+    // Declarative signal handlers — never signal.connect()
+    btnSettings.onClicked: stack.push("SettingsScreen.qml")
+    wifiToggle.onToggled: network.setWifi(wifiToggle.checked)
 }
 ```
 
+**Forbidden patterns in the logic wrapper:**
+
+```qml
+// ❌ Never: imperative assignment in Component.onCompleted
+Component.onCompleted: {
+    labelDeviceName.text = device.name
+    btnSettings.clicked.connect(openSettings)
+}
+
+// ❌ Never: overlaying a MouseArea to make something tappable.
+//          If you want a click target, set its export hint to baseElement:"TouchArea"
+//          and re-export — do not patch over the design layer.
+MouseArea { anchors.fill: someEmbeddedItem; onClicked: ... }
+```
+
+Property bindings and `onXxx:` handlers are the only correct way to connect logic to the design layer. They re-evaluate automatically when sources change and survive re-export.
+
 This way:
-- `design/ScreenName.ui.qml` can be re-exported at any time without losing logic
-- `logic/ScreenName.qml` develops independently against stable property aliases
+- `design/HomeScreen.ui.qml` can be re-exported at any time without losing logic
+- `logic/HomeScreen.qml` develops independently against stable property aliases
 - The design file remains openable standalone with `qml6` for visual preview
-- Consumers just use `ScreenName {}` and get the complete component
+- Consumers just use `HomeScreen {}` and get the complete component
 
 For simple design-only components (buttons, icons, etc.) that need no logic wrapper, register them directly without the `UI` suffix:
 ```
@@ -225,7 +285,12 @@ Build or preview to confirm the layout and interactions work correctly.
 
 - Never hand-edit `.ui.qml` files. Re-export if changes are needed.
 - All logic and event handlers belong in the logic wrapper, not in `.ui.qml`.
-- `type: "embed"` inlines the layer into the root component file.
+- One `type:"custom"` per screen / per reusable widget — never let multiple screens collapse into one `.ui.qml`.
+- Names come from the layer's role (`HomeScreen`, `wifiToggle`); numeric suffixes (`Screen1`, `btn3`) are forbidden.
+- Button captions go through `textSource`, never through imperative `.text = ...` assignment in the logic wrapper.
+- Tappable regions go through `baseElement:"TouchArea"` in the design layer — never overlay a `MouseArea` from the logic wrapper.
+- Logic wrappers use property bindings and declarative `onXxx:` handlers only — no `Component.onCompleted` imperative assignment, no `signal.connect()`.
+- `type: "embed"` inlines the layer into the parent component file.
 - `type: "custom"` generates a separate reusable component file.
 - Use `qmldir` type renaming (`ComponentUI` / `Component`) to connect design and logic layers.
 )"_s);
@@ -450,6 +515,10 @@ Build or preview to confirm the layout and interactions work correctly.
             for (const auto &val : propsArr)
                 hint.properties.insert(val.toString());
         }
+        if (opts.contains("textSource"_L1))
+            hint.textSource = opts["textSource"_L1].toString();
+        if (opts.contains("imageSource"_L1))
+            hint.imageSource = opts["imageSource"_L1].toString();
         if (opts.contains("anchorMode"_L1)) {
             static const QHash<QString, QPsdExporterTreeItemModel::ExportHint::AnchorMode> anchorMap = {
                 {"none"_L1,        QPsdExporterTreeItemModel::ExportHint::AnchorNone},
@@ -479,6 +548,8 @@ Build or preview to confirm the layout and interactions work correctly.
             {"baseElement"_L1, QPsdExporterTreeItemModel::ExportHint::nativeCode2Name(hint.baseElement)},
             {"visible"_L1, hint.visible},
             {"properties"_L1, propsArr},
+            {"textSource"_L1, hint.textSource},
+            {"imageSource"_L1, hint.imageSource},
             {"anchorMode"_L1, anchorModeName(hint.anchorMode)},
         });
     }
@@ -698,6 +769,8 @@ Build or preview to confirm the layout and interactions work correctly.
                                             "CheckBox, ComboBox, RadioButton, Slider, SpinBox, Switch, TabBar, TabButton. "
                                             "Prefer type=native+baseElement whenever a Figma node corresponds to a stock UI control (toggle, dropdown, tab segment, numeric stepper, etc.) — let the design's visuals live in a Qt Quick Controls 2 style module activated via QQuickStyle::setStyle, instead of writing a type=custom wrapper that re-implements standard semantics like model/value/checked); "
                                             "properties (array of strings: visible, color, position, text, size, image, translatable — controls which attributes are exported as bindable properties. translatable applies to Text layers only and wraps the literal in qsTr(\"...\") for QtQuick or @tr(\"...\") for Slint so it can be picked up by the framework's translation tooling); "
+                                            "textSource (string, for type=native baseElement=Button/Button_Highlighted — name of a sibling text layer whose string becomes the Button's text. Use this instead of leaving the caption as a separate embed and assigning btn.text from logic code: with textSource, the design's text changes flow straight to the .ui.qml on re-export); "
+                                            "imageSource (string, for type=native — name of a sibling image layer that supplies the control's icon/background asset, analogous to textSource); "
                                             "anchorMode (string: none, topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight — parent-relative positioning; mutually exclusive with the position property)"_L1},
 
             {"do_export"_L1, "Export the loaded design to a target format and directory"_L1},
