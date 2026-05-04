@@ -15,7 +15,6 @@ Q_IMPORT_PLUGIN(QMcpServerStdioPlugin)
 #include <QtGui/QPainter>
 #include <QtPsdCore/qpsdblend.h>
 #include <QtMcpCommon/QMcpPrompt>
-#include <QtMcpCommon/QMcpPromptArgument>
 #include <QtMcpCommon/QMcpPromptMessage>
 #include <QtMcpCommon/QMcpPromptMessageContent>
 #include <QtMcpCommon/QMcpTextContent>
@@ -55,21 +54,11 @@ public:
             prompt.setName("export-screen"_L1);
             prompt.setDescription("Export a design (PSD or Figma) to a GUI framework (QML, Slint, Flutter, etc.)"_L1);
 
-            QMcpPromptArgument pathArg;
-            pathArg.setName("path"_L1);
-            pathArg.setDescription("Absolute path to a PSD file, or a Figma URL (https://www.figma.com/design/...)"_L1);
-            pathArg.setRequired(true);
-
-            QMcpPromptArgument formatArg;
-            formatArg.setName("format"_L1);
-            formatArg.setDescription("Export format key (e.g. QtQuick, Slint). Run list_exporters to see options."_L1);
-            formatArg.setRequired(false);
-
-            prompt.setArguments({pathArg, formatArg});
-
             QMcpTextContent text(uR"(# Export a Design to a GUI Framework
 
-Arguments: path = {path}, format = {format}
+Ask the user (or pick from the conversation) for:
+- the design source — an absolute path to a PSD file, or a Figma URL / file key
+- the target export format — one of the keys returned by `list_exporters` (e.g. `QtQuick`, `Slint`); if it has not been specified yet, run `list_exporters` and ask
 
 ## Steps
 
@@ -77,12 +66,12 @@ Arguments: path = {path}, format = {format}
 
 **For PSD files:**
 ```
-load_psd(path={path})
+load_psd(path="<absolute path to the PSD file>")
 ```
 
 **For Figma files:**
 ```
-import_figma(source="{path}")
+import_figma(source="<Figma URL or file key>")
 ```
 If importing from Figma, you may first call `list_figma_pages` to see available pages, then specify `pageIndex` in the options.
 
@@ -186,10 +175,10 @@ This persists export hints to a `.psd_` sidecar file next to the PSD.
 ### 5. Run the export
 
 ```
-do_export(format="{format}", outputDir=".", options='{}')
+do_export(format="<exporter key>", outputDir=".", options='{}')
 ```
 
-If `{format}` is empty, call `list_exporters` to see available formats and ask the user to choose one.
+If the format has not been chosen yet, call `list_exporters` to see available formats and ask the user to pick one.
 
 After export, confirm there is **one `.ui.qml` per screen frame** (e.g. `HomeScreen.ui.qml`, `SettingsScreen.ui.qml`). A single oversized file means a `type:"custom"` hint is missing somewhere — go back to step 3.
 
