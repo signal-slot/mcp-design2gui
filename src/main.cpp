@@ -152,9 +152,16 @@ set_export_hint(layerId=..., type="embed", options='{"id": "labelDeviceName"}')
 ```
 
 #### Translatable text
-For any user-visible string that should go through the framework's translation pipeline, add `translatable` to `properties`. The QtQuick exporter then emits `text: qsTr("Hello")` and the Slint exporter emits `text: @tr("Hello")` instead of plain string literals (also applies to a Button's `textSource` layer):
+For any user-visible string that should go through the framework's translation pipeline, add `translatable` to `properties`. The QtQuick exporter then emits `text: qsTr("Hello")` and the Slint exporter emits `text: @tr("Hello")` instead of plain string literals.
+
+**Standalone Text layer:**
 ```
 set_export_hint(layerId=..., type="embed", options='{"id": "labelDeviceName", "properties": ["text", "translatable"]}')
+```
+
+**Native Button caption (set `translatable` on the Button itself, not on the textSource layer):**
+```
+set_export_hint(layerId=<buttonLayerId>, type="native", options='{"id": "btnOk", "baseElement": "Button", "textSource": "OK Label", "properties": ["translatable"]}')
 ```
 
 #### Anchored elements (parent-relative positioning instead of absolute x/y)
@@ -757,7 +764,7 @@ Build or preview to confirm the layout and interactions work correctly.
                                             "Container (Item), TouchArea (MouseArea), Button, Button_Highlighted, "
                                             "CheckBox, ComboBox, RadioButton, Slider, SpinBox, Switch, TabBar, TabButton. "
                                             "Prefer type=native+baseElement whenever a Figma node corresponds to a stock UI control (toggle, dropdown, tab segment, numeric stepper, etc.) — let the design's visuals live in a Qt Quick Controls 2 style module activated via QQuickStyle::setStyle, instead of writing a type=custom wrapper that re-implements standard semantics like model/value/checked); "
-                                            "properties (array of strings: visible, color, position, text, size, image, translatable — controls which attributes are exported as bindable properties. translatable applies to Text layers only and wraps the literal in qsTr(\"...\") for QtQuick or @tr(\"...\") for Slint so it can be picked up by the framework's translation tooling); "
+                                            "properties (array of strings: visible, color, position, text, size, image, translatable — controls which attributes are exported as bindable properties. translatable wraps the literal in qsTr(\"...\") for QtQuick or @tr(\"...\") for Slint and applies to (a) standalone Text layers and (b) the Native Button itself when its caption comes from a textSource layer); "
                                             "textSource (string, for type=native baseElement=Button/Button_Highlighted — name of a sibling text layer whose string becomes the Button's text. Use this instead of leaving the caption as a separate embed and assigning btn.text from logic code: with textSource, the design's text changes flow straight to the .ui.qml on re-export); "
                                             "imageSource (string, for type=native — name of a sibling image layer that supplies the control's icon/background asset, analogous to textSource); "
                                             "anchorMode (string: none, topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight — parent-relative positioning; mutually exclusive with the position property)"_L1},
