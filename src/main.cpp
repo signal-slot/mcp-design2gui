@@ -79,7 +79,26 @@ If the file has multiple pages, call `list_figma_pages` first to see them and th
 
 Both calls return file information including dimensions and layer count.
 
-### 2. Inspect the layer tree
+### 2. Confirm fonts (sanity check before any further work)
+
+Font checking is independent of hint configuration and only requires the design to be loaded — run it now, before sinking effort into setting export hints. If many fonts are missing on this machine the export will silently fall back at runtime, so catching the gap up front is fail-fast.
+
+```
+get_fonts_used()
+```
+Returns every font family the design references and how it currently resolves on this machine. For each font that is missing or that you intentionally want to substitute (e.g. swap a paid font for an open-source equivalent in the build), set a mapping:
+
+```
+set_font_mapping(fromFont="OldFont-Bold", toFont="Roboto", global=false)
+```
+- `global` is required (no default). `false` scopes the mapping to the currently loaded design (saved next to the design's hint file); `true` scopes it system-wide (saved in the user-level mapping store) — use the latter for fonts you always remap the same way, regardless of project.
+- Pass an empty `toFont` to clear a mapping.
+
+Mappings change the value the exporter writes into the generated component's font attribute (`font.family` for QtQuick, the framework-equivalent attribute for other targets). With the mapping above, a Text layer authored as `OldFont-Bold` exports as if it had been authored as `Roboto`.
+
+Re-run `get_fonts_used()` after setting mappings to confirm everything resolves before exporting.
+
+### 3. Inspect the layer tree
 
 ```
 get_layer_tree()
@@ -93,7 +112,7 @@ Helper tools for tricky cases:
 - `get_layer_details(layerId=...)` — text runs, font info, shape geometry, linked-file references for one layer.
 - `get_layer_image(layerId=...)` — renders the layer to a bitmap so you can recognize it visually.
 
-**Hidden layers** (toggled invisible in PSD/Figma): they are still exported, but the generated output sets `visible: false` on them so they don't render at runtime. If they are pure design comments / off-canvas notes, mark them `type:"skip"` to drop them from the export entirely.
+**Hidden layers** (toggled invisible in PSD/Figma): they are still exported, but the generated output flags them as not-rendered using whatever the target framework's idiom is (`visible: false` for QtQuick / Slint, `Visibility(visible: false, ...)` for Flutter, an `.opacity(0)` / conditional view for SwiftUI, conditional render in React Native, ...). The element still exists in the output. If a hidden layer is purely a design-time note / guide that should not appear in the export at all, mark it `type:"skip"` instead.
 
 Review the child layers and classify them:
 
@@ -113,10 +132,7 @@ Review the child layers and classify them:
 - **Text labels (dynamically updated)** — assign an `id` so they become property aliases.
 - **Decorative elements** — no hint needed (exported by default).
 
-Use `get_layer_details(layerId=...)` to inspect individual layers for more detail (text runs, shape info, linked files, etc.).
-Use `get_layer_image(layerId=...)` to visually inspect a layer's rendered appearance.
-
-### 3. Set export hints
+### 4. Set export hints
 
 #### `type` values at a glance
 
@@ -137,7 +153,7 @@ Use `get_layer_image(layerId=...)` to visually inspect a layer's rendered appear
 
 #### Each screen / functional unit / repeated widget — one `type:"custom"` per generated component file
 
-Use `type:"custom"` for any layer that matches an extraction rule from step 2. Examples spanning the three categories:
+Use `type:"custom"` for any layer that matches an extraction rule from step 3. Examples spanning the three categories:
 ```
 # Artboards / screens
 set_export_hint(layerId=..., type="custom", options='{"componentName": "HomeScreen"}')
@@ -255,24 +271,6 @@ set_export_hint(layerId=..., type="skip", options='{}')
 ```
 Use for guide grids, comments, off-canvas reference art, or anything that should not appear in the generated UI.
 
-### 4. Confirm fonts (and remap if needed)
-
-The generated output references fonts by family name (`font.family: "..."`). If the design uses a font that the runtime environment does not have installed, the rendered text will fall back silently — usually to a default sans-serif, breaking the look. Check the font situation **before** exporting:
-
-```
-get_fonts_used()
-```
-Returns every font family the design references and how it currently resolves on this machine. For each font that is missing or that you intentionally want to substitute (e.g. swap a paid font for an open-source equivalent in the build), set a mapping:
-
-```
-set_font_mapping(fromFont="MyriadPro-Bold", toFont="Roboto", global=false)
-```
-- `global=false` scopes the mapping to the currently loaded design (saved next to the design's hint file).
-- `global=true` scopes it system-wide (saved in the user-level mapping store) — use this for fonts you always remap the same way, regardless of project.
-- Pass an empty `toFont` to clear a mapping.
-
-Re-run `get_fonts_used()` after setting mappings to confirm everything resolves before exporting.
-
 ### 5. Run the export
 
 Export directly into the project's `qml/design/` (or the equivalent generated-code directory for your target framework — see step 7) so the generated files land in their final location with no manual moving afterwards:
@@ -282,13 +280,24 @@ do_export(format="<exporter key>", outputDir="qml/design", options='{}')
 
 If the format has not been chosen yet, call `list_exporters` to see available formats and ask the user to pick one.
 
-The exporter writes:
-- one component file per `type:"custom"` (e.g. `<ComponentName>.ui.qml` for QtQuick, `<ComponentName>.slint` for Slint, `<component_name>.dart` for Flutter, `<ComponentName>.swift` under `Views/` for SwiftUI, `<ComponentName>.tsx` under `components/` for React Native);
-- an `images/` (or framework-equivalent: `assets/images/` for React Native, `Assets.xcassets/Images/` for SwiftUI) subdirectory under `outputDir/` containing every PNG/JPG asset the design references; the generated component files reference them by relative path so the layout is self-contained as long as the images directory stays next to the components.
+The exporter writes (these are facts about the exporter's output layout, not a recommendation — use them to decide what `outputDir` should point at):
+- one component file per `type:"custom"`, in the layout the framework expects:
+  - **QtQuick** — `<outputDir>/<ComponentName>.ui.qml` (flat)
+  - **Slint** — `<outputDir>/<ComponentName>.slint` (flat)
+  - **Flutter** — `<outputDir>/<component_name>.dart` (flat, snake_case file names)
+  - **SwiftUI** — `<outputDir>/Views/<ComponentName>.swift` (the `Views/` subdir is created by the exporter)
+  - **React Native** — `<outputDir>/components/<ComponentName>.tsx` (the `components/` subdir is created by the exporter)
+  - **LVGL** — `<outputDir>/<ComponentName>.xml` (LVGL XML format, runtime-parsed by `lv_xml_*`) plus a `globals.xml`
+- an asset images subdirectory under `outputDir/`, again in the layout the framework expects:
+  - QtQuick / Slint / LVGL — `<outputDir>/images/`
+  - Flutter / React Native — `<outputDir>/assets/images/`
+  - SwiftUI — `<outputDir>/Assets.xcassets/Images/<name>.imageset/`
+
+The generated component files reference these images by relative path, so the layout is self-contained as long as the images subdirectory stays next to the components.
 
 **Re-export overwrites** every component file and every asset image in `outputDir`. Never place hand-written code in `outputDir` — keep wrappers / logic / view-models / event handlers in a *separate* directory (typically a sibling like `qml/logic/`, `lib/widgets/`, `Sources/ViewModels/`, `src/screens/`, ... — see step 7).
 
-After export, confirm there is **one component file per screen frame** (e.g. `HomeScreen.ui.qml`, `SettingsScreen.ui.qml`). A single oversized file means a `type:"custom"` hint is missing somewhere — go back to step 3.
+After export, confirm there is **one component file per screen frame** (e.g. `HomeScreen.ui.qml`, `SettingsScreen.ui.qml`). A single oversized file means a `type:"custom"` hint is missing somewhere — go back to step 4.
 
 ### 6. Save hints (checkpoint for next session)
 
@@ -296,7 +305,7 @@ After export, confirm there is **one component file per screen frame** (e.g. `Ho
 save_hints()
 ```
 
-Persists every hint you set in step 3 (and every font mapping you set in step 4) to a `.psd_` sidecar file next to the design. **This is independent of `do_export`** — exporting works directly off the in-memory hints set this session, so you can run `do_export` without ever calling `save_hints`. The reason to call it is so the next session (next MCP server start, next collaborator opening the same design) can pick up where you left off rather than re-classifying the layer tree from scratch.
+Persists every hint you set in step 4 (and every font mapping you set in step 2) to a `.psd_` sidecar file next to the design. **This is independent of `do_export`** — exporting works directly off the in-memory hints set this session, so you can run `do_export` without ever calling `save_hints`. The reason to call it is so the next session (next MCP server start, next collaborator opening the same design) can pick up where you left off rather than re-classifying the layer tree from scratch.
 
 Call this once you are happy with the hint configuration, typically after step 5 once you have visually confirmed the export looks right.
 
@@ -447,7 +456,7 @@ DeviceListScreenUI {
 ```
 Treat the design's repeated-looking elements as **delegates**: export one of them as a `type:"custom"` component, give the surrounding list area an `id` via an `embed` hint so logic can attach a `ListView` to its `children`, and drive instantiation from logic.
 
-**Re-skinning native controls** — when the export uses `type:"native"`, the generated `.ui.qml` references stock `QtQuick.Controls` types (`Switch`, `ComboBox`, etc.). Restyle them by adding a Qt Quick Controls 2 style module:
+**Re-skinning native controls (QtQuick-specific)** — applies only when `type:"native"` is used with the QtQuick exporter; this is the QtQuick path for matching the design's look on a stock control. (Other frameworks have their own theming mechanisms and are out of scope of this subsection.) The generated `.ui.qml` references stock `QtQuick.Controls` types (`Switch`, `ComboBox`, etc.); restyle them by adding a Qt Quick Controls 2 style module:
 
 ```
 qml/MyStyle/             # one .qml per type (Switch.qml, ComboBox.qml, ...)
@@ -470,29 +479,73 @@ This keeps the design files re-exportable and lets the standard control APIs (`m
 
 The **principle** is the same for every target — keep the generated code re-exportable and host the logic separately — but the **mechanism** differs because each framework has its own way of attaching behavior. Apply the pattern that fits your target:
 
-- **Slint** (`*.slint` files in `outputDir`). Slint is a markup language plus a host language (Rust / C++ / Node / Python). The design/logic split lives across two files, not two `.slint` files:
-  - `<outputDir>/HomeScreen.slint` — generated, never hand-edit. Re-exported in place.
-  - host-language code (Rust / C++ / ...) — instantiates the component via `slint::ComponentHandle`, sets properties, attaches callbacks. This is your "logic wrapper".
-  - For shared widgets, declare additional `.slint` files alongside the generated ones (the generated file imports them by name); for *editable* logic-bearing variants, wrap the generated component in a hand-written `.slint` file in a *different* directory and re-export only into the generated dir.
+- **Slint** (`*.slint` files in `outputDir`). Slint is a markup language plus a host language (Rust / C++ / Node / Python). The design/logic split lives across the markup-vs-host boundary, not across two `.slint` files:
+  ```
+  slint/
+    generated/         # do_export overwrites everything in here
+      HomeScreen.slint
+      Clock.slint
+      images/
+    shared/            # hand-written shared widgets — generated/ .slint files import them by name
+      AppHeader.slint
+    variants/          # hand-written .slint files that wrap a generated component to add logic
+      HomeScreenWithLogic.slint
+  src/                 # the host language — Rust / C++ / Node / Python
+    main.rs            # instantiates HomeScreen via slint::ComponentHandle, sets properties, attaches callbacks
+  ```
+  Re-export only into `slint/generated/`. Hand-written `.slint` files in `slint/shared/` and `slint/variants/` are safe because `do_export` only writes the components named by `type:"custom"` hints (and assets); files with unrelated names in the same `outputDir` would not be touched, but keeping them in a sibling directory removes any doubt and makes the boundary visible.
 - **Flutter** (`*.dart` files; snake_case file names). The generated `.dart` files are stateless `Widget` classes. Pattern:
-  - `lib/design/home_screen.dart` (re-exported, never hand-edit) — exports a `HomeScreenDesign` widget that takes its dynamic data via constructor parameters.
-  - `lib/screens/home_screen.dart` (hand-written) — a `StatefulWidget` (or `ConsumerWidget` / etc.) that builds a `HomeScreenDesign(...)` with bound values and event callbacks. This is the "logic wrapper".
-  - Treat the generated widgets as dumb leaves; never edit them, and never let business logic land inside.
+  ```
+  lib/
+    design/            # do_export overwrites everything in here (point outputDir at this)
+      home_screen.dart # exports a HomeScreenDesign widget taking dynamic data via constructor params
+      assets/images/
+    screens/           # hand-written — StatefulWidget / ConsumerWidget that builds HomeScreenDesign(...)
+      home_screen.dart
+  ```
+  Treat the generated widgets as dumb leaves; never edit them, and never let business logic land inside.
 - **SwiftUI** (`<outputDir>/Views/*.swift`, plus `<outputDir>/Assets.xcassets/Images/`). Generated structs are `View`s. Pattern:
-  - `Views/` (re-exported) holds the generated `HomeScreenView`-style structs that take `@Binding` / parameters for their dynamic surface.
-  - `ViewModels/` (hand-written) holds `ObservableObject` / `@Observable` view-models that own state; a thin parent view ties a view-model to a generated view via `@StateObject` + bindings.
-  - Re-export only into `Views/`; never put view-model logic in there.
+  ```
+  Sources/
+    Generated/         # do_export overwrites everything in here (point outputDir at this)
+      Views/
+        HomeScreenView.swift  # @Binding / parameters drive the dynamic surface
+      Assets.xcassets/Images/
+    ViewModels/        # hand-written — ObservableObject / @Observable owning state
+      HomeScreenViewModel.swift
+    Screens/           # hand-written — thin parent View that ties view-model to generated view
+      HomeScreen.swift
+  ```
+  Re-export only into `Sources/Generated/`; never put view-model logic in there.
 - **React Native** (`<outputDir>/components/*.tsx`, plus `<outputDir>/assets/images/`). Pattern:
-  - `components/` (re-exported) holds presentational functional components: `export const HomeScreenDesign = ({ deviceName, onSettingsPress }) => (...)`.
-  - `screens/` or `containers/` (hand-written) — composes the generated design with state/data sources and event handlers. Use the React patterns the project already uses (hooks / Zustand / Redux); the generated layer is just a dumb view.
-- **LVGL / C** (generated `.c` / `.h` in `outputDir`). The generated tree is built by a setup function the embedding code calls. Pattern:
-  - generated `.c/.h` (re-exported) provides a `void create_home_screen(lv_obj_t *parent)` entry point and exposes named `lv_obj_t *` handles for the layers you gave an `id` to.
-  - hand-written application code calls the setup, then attaches event callbacks (`lv_obj_add_event_cb(...)`) and binds dynamic content. Never edit the generated `.c/.h` directly.
+  ```
+  src/
+    generated/         # do_export overwrites everything in here (point outputDir at this)
+      components/
+        HomeScreenDesign.tsx   # presentational FC — props drive bindings, callbacks for events
+      assets/images/
+    screens/           # hand-written — composes the generated design with state/data sources
+      HomeScreen.tsx
+  ```
+  Use whichever React data-flow patterns the project already uses (hooks / Zustand / Redux / TanStack Query / ...); the generated layer is just a dumb view.
+- **LVGL** (`<outputDir>/<Component>.xml` files in LVGL XML format, plus a `globals.xml` and `images/`). The generated XML is parsed at runtime via `lv_xml_*`. Pattern:
+  ```
+  ui/
+    generated/         # do_export overwrites everything in here (point outputDir at this)
+      HomeScreen.xml
+      globals.xml
+      images/
+    src/               # hand-written application code
+      home_screen.c    # calls lv_xml_component_register_from_file(...) on HomeScreen.xml,
+                       # then uses lv_obj_find_by_name(...) on layers you gave an id to,
+                       # and attaches lv_obj_add_event_cb(...) for events
+  ```
+  Never edit the generated XML directly.
 
 The constants across all targets:
-1. `outputDir` is the **only** place re-export touches; treat it as build artifacts.
-2. Hand-written wrappers / view-models / event handlers live **outside** `outputDir` in directories that are version-controlled separately.
-3. The generated layer exposes hooks (constructor params, `id`-named handles, callbacks, exposed `properties`) for the wrapper to bind values and behavior to. Use `properties` (step 3) deliberately to control which design attributes become parameterizable on the generated layer.
+1. `outputDir` is the **only** place re-export touches; treat it as build artifacts and point it at a directory that contains no hand-written code.
+2. Hand-written wrappers / view-models / event handlers live **outside** `outputDir` in sibling directories that are version-controlled separately.
+3. The generated layer exposes hooks (constructor params, `id`-named handles, callbacks, exposed `properties`) for the wrapper to bind values and behavior to. Use `properties` (step 4) deliberately to control which design attributes become parameterizable on the generated layer.
 
 ### 8. Verify
 
@@ -512,21 +565,29 @@ For every target, verify:
 
 ## Important notes
 
-- Never hand-edit `.ui.qml` files. Re-export if changes are needed.
-- All logic and event handlers belong in the logic wrapper, not in `.ui.qml`.
-- Extract aggressively — one `type:"custom"` per (a) artboard / screen, (b) self-contained functional unit (clock, status bar, ...), (c) anything appearing more than once. Never let multiple screens or distinct functional units collapse into one `.ui.qml`. For repetitions, extract once and reuse — set `type:"skip"` on the duplicate frames.
-- **Logic is owned locally**: each component has its own `logic/X.qml`. Do not centralize behavior in `Main.qml` with deep alias chains like `mainWindow.statusBar.wifiToggle.onToggled: ...` — wire the toggle inside `logic/StatusBar.qml` instead.
+### Universal (every target framework)
+
+- Never hand-edit generated component files. Re-export if changes are needed.
+- All hand-written logic / event handlers / view-models live **outside** `outputDir`, in a sibling directory that re-export never touches.
+- Extract aggressively — one `type:"custom"` per (a) artboard / screen, (b) self-contained functional unit (clock, status bar, ...), (c) anything appearing more than once. Never let multiple screens or distinct functional units collapse into a single component file. For repetitions, extract once and reuse — set `type:"skip"` on the duplicate frames.
+- **Logic is owned locally** — each component owns its own wrapper / view-model in the host directory; the parent screen does not reach into a child component's internals through deep alias / accessor chains.
+- Names come from the layer's role (`HomeScreen`, `wifiToggle`); numeric suffixes (`Screen1`, `btn3`) are forbidden.
+- Button captions go through `textSource`, never through assigning the caption from the wrapper / view-model.
+- Tappable design layers (image/icon + tap) go through `type:"embed"` + `interactive:true`; bare hit-only regions go through `type:"native"` + `baseElement:"TouchArea"`. Never overlay a fresh hit area on top of an embedded design item from the wrapper.
+- Choosing `type:"native"` for stock-control nodes is a tradeoff: you get framework semantics (`checked`, `model`, `value`, ...) but must provide a style/theming layer to match the design. `type:"embed"` keeps the exact visuals but you re-implement state. Decide per-control, not as a blanket rule.
+- Wrappers wire behavior **declaratively** — bindings, declarative event handlers, declarative state machines (where the framework supports them). No imperative wiring of generated layers from constructor / lifecycle hooks.
+- `properties` selects which design attributes are exposed for runtime override (visible / position / size / color / text / font / image). `translatable` is special: it changes the output template to wrap text in the framework's translation primitive (`qsTr(...)` / `@tr(...)` / etc.).
+- Dynamic lists are not exported as a list/repeater construct; export one delegate as `type:"custom"` and instantiate the view in the wrapper / host.
+
+### QtQuick specifics
+
+- Generated component files are `*.ui.qml`; the per-screen wrapper is a `*.qml` that inherits the matching `XUI`.
+- Export with `outputDir="qml/design"` so the result drops straight into the project layout. Asset images land in `qml/design/images/` and are referenced relatively by the `.ui.qml` files.
 - Design files (`design/*.ui.qml`) reference children by their **public name** (no `UI` suffix); the qmldir resolves it to the logic wrapper at both runtime and standalone preview.
 - Design files import only framework modules (`QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, ...) — never project modules. That keeps every `.ui.qml` openable standalone.
-- Names come from the layer's role (`HomeScreen`, `wifiToggle`); numeric suffixes (`Screen1`, `btn3`) are forbidden.
-- Button captions go through `textSource`, never through imperative `.text = ...` assignment in the logic wrapper.
-- Tappable design layers (image/icon + tap) go through `type:"embed"` + `interactive:true`; bare hit-only regions go through `type:"native"` + `baseElement:"TouchArea"`. Never overlay a `MouseArea` from the logic wrapper to make an embedded item tappable.
-- Choosing `type:"native"` for stock-control nodes is a tradeoff: you get framework semantics (`checked`, `model`, `value`, ...) but must build a `QQuickStyle` module to match the design. `type:"embed"` keeps the exact visuals but you re-implement state. Decide per-control, not as a blanket rule.
-- Logic wrappers use property bindings and declarative `onXxx:` handlers only — no `Component.onCompleted` imperative assignment, no `signal.connect()`.
-- `properties` selects which design attributes are exposed for runtime override (visible / position / size / color / text / font / image). `translatable` is special: it changes the output template to wrap text in `qsTr(...)` / `@tr(...)`.
-- Dynamic lists are not exported as `ListView` / `Repeater`; export one delegate as `type:"custom"` and instantiate the view in the logic wrapper.
-- Export with `outputDir="qml/design"` so the result drops straight into the project layout. Asset images land in `qml/design/images/` and are referenced relatively by the `.ui.qml` files.
+- Logic wrappers use property bindings and declarative `onXxx:` handlers — `Component.onCompleted` imperative assignment and `signal.connect()` are forbidden, but the rest of declarative QML (states, transitions, Connections, function definitions, new property declarations, sub-objects like Timer / Model / ...) is fair game.
 - qmldir registers three patterns: `XUI`+`X` (has logic wrapper), `X` → `design/X.ui.qml` (pure design), `X` → `logic/X.qml` (pure logic, no design source).
+- Re-skinning native controls happens via a Qt Quick Controls 2 style module activated by `QQuickStyle::setStyle("YourStyle")`; never wrap a stock control in a `type:"custom"` re-implementation.
 )"_s);
 
             QMcpPromptMessageContent content(text);
