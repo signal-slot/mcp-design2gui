@@ -357,8 +357,7 @@ Component.onCompleted: {
 
 // ❌ Never: overlaying a MouseArea on top of an embedded design item to make it tappable.
 //          If a region needs to react to touch, set its export hint to type="embed" with
-//          interactive:true (or baseElement:"TouchArea") and re-export — do not patch over
-//          the design layer from logic.
+//          interactive:true and re-export — do not patch over the design layer from logic.
 //          (A top-level MouseArea covering the whole wrapper is fine if the entire
 //          component is itself the click target — that is a logic-level concept, not a
 //          design-layer one.)
@@ -430,14 +429,12 @@ Build or preview to confirm the layout and interactions work correctly.
 - Design files import only framework modules (`QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, ...) — never project modules. That keeps every `.ui.qml` openable standalone.
 - Names come from the layer's role (`HomeScreen`, `wifiToggle`); numeric suffixes (`Screen1`, `btn3`) are forbidden.
 - Button captions go through `textSource`, never through imperative `.text = ...` assignment in the logic wrapper.
-- Tappable design layers (image/icon + tap) go through `type:"embed"` + `interactive:true` (or equivalently `baseElement:"TouchArea"`); bare hit-only regions go through `type:"native"` + `baseElement:"TouchArea"`. Never overlay a `MouseArea` from the logic wrapper to make an embedded item tappable.
+- Tappable design layers (image/icon + tap) go through `type:"embed"` + `interactive:true`; bare hit-only regions go through `type:"native"` + `baseElement:"TouchArea"`. Never overlay a `MouseArea` from the logic wrapper to make an embedded item tappable.
 - Choosing `type:"native"` for stock-control nodes is a tradeoff: you get framework semantics (`checked`, `model`, `value`, ...) but must build a `QQuickStyle` module to match the design. `type:"embed"` keeps the exact visuals but you re-implement state. Decide per-control, not as a blanket rule.
 - Logic wrappers use property bindings and declarative `onXxx:` handlers only — no `Component.onCompleted` imperative assignment, no `signal.connect()`.
 - `properties` selects which design attributes are exposed for runtime override (visible / position / size / color / text / font / image). `translatable` is special: it changes the output template to wrap text in `qsTr(...)` / `@tr(...)`.
 - Dynamic lists are not exported as `ListView` / `Repeater`; export one delegate as `type:"custom"` and instantiate the view in the logic wrapper.
 - Export with `outputDir="qml/design"` so the result drops straight into the project layout. Asset images land in `qml/design/images/` and are referenced relatively by the `.ui.qml` files.
-- `type: "embed"` inlines the layer into the parent component file.
-- `type: "custom"` generates a separate reusable component file.
 - qmldir registers three patterns: `XUI`+`X` (has logic wrapper), `X` → `design/X.ui.qml` (pure design), `X` → `logic/X.qml` (pure logic, no design source).
 )"_s);
 
