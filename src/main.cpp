@@ -85,8 +85,13 @@ get_layer_tree()
 
 Review the child layers and classify them:
 
-- **Screen-level frames (each visible screen / route)** — every top-level frame that represents a distinct screen (Home, Settings, DeviceList, ...) must be its own reusable component. Mark each one `type: "custom"` with a `componentName` derived from the screen's *role* in PascalCase. **Never** leave them as the default embed — that produces one giant `MainScreen.ui.qml` containing every screen inlined together.
-- **Reusable widgets that repeat (cards, list rows, custom toggles you'll instantiate many times)** — also `type: "custom"` with a role-based `componentName`.
+- **What becomes its own `.ui.qml` file (`type:"custom"` with a role-based PascalCase `componentName`)** — extract aggressively. Apply all four rules below; if a layer matches any of them it gets its own component file:
+  1. **Top-level layers** in the design tree (PSD root groups / Figma top-level frames). Each one becomes a `.ui.qml`.
+  2. **Each artboard / each visible screen / each route** (Home, Settings, DeviceList, PaymentScreen, ...). One `.ui.qml` per screen.
+  3. **Self-contained functional units** — anything with an identifiable, single role you would name with one noun: a clock, a network indicator, a status bar, a navigation header, a search panel. Extract these even when they appear only once, so the logic that owns the function lives next to its visual (in a per-component `logic/X.qml`) rather than getting buried in the parent screen.
+  4. **Anything that appears more than once** — cards, list rows, repeated buttons, toolbar icons. Export the design *once* as a `type:"custom"` component, then instantiate it from each call site (and from `Repeater` / `ListView` delegates in logic). Never copy-paste a duplicate frame's hint.
+
+  **Never** leave screens / artboards / functional units as the default embed — that produces one giant `MainScreen.ui.qml` with everything inlined, and breaks both per-component logic ownership and re-exportability.
 - **Stock UI controls — `type: "native"` (substitutive) vs. `type: "embed"` (additive)**. When a Figma node is *semantically* a standard control (toggle, dropdown, tab segment, numeric stepper, button, ...), there is a real tradeoff:
   - **`type: "native"` + matching `baseElement`** (`Switch`, `ComboBox`, `TabBar` + `TabButton`, `SpinBox`, `Slider`, `CheckBox`, `RadioButton`, `Button`, `Button_Highlighted`) gives you the framework's interaction logic for free (`checked`, `model`, `value`, `currentIndex`, ...). The catch: the layer's own visuals are dropped and the framework draws its default look, so you must build a **custom QtQuick.Controls 2 style module** to make the control actually look like the design (one `.qml` per control type), then activate it with `QQuickStyle::setStyle("YourStyle")`.
   - **`type: "embed"` + tappable layers** (see "Tappable design layers" below) keeps the design's exact visuals as images and makes them touch-sensitive, but you re-implement the control's state machinery (toggle, selection, model, etc.) yourself in the logic wrapper.
@@ -116,13 +121,25 @@ Use `get_layer_image(layerId=...)` to visually inspect a layer's rendered appear
 - `id`: camelCase, role-based (`wifiToggle`, `signalSource`, `btnSettings`).
 - **Forbidden:** numeric suffixes used as a substitute for naming (`Screen1`, `Screen2`, `btn1`, `label3`). If two siblings genuinely share a role, the design itself needs disambiguation — ask before falling back to numbers.
 
-#### Each screen / reusable component
+#### Each screen / functional unit / repeated widget — one `type:"custom"` per `.ui.qml`
+
+Apply the four extraction rules from step 2 (top-level layers, artboards, self-contained functional units, anything appearing more than once):
 ```
+# Top-level layers / artboards / screens
 set_export_hint(layerId=..., type="custom", options='{"componentName": "HomeScreen"}')
 set_export_hint(layerId=..., type="custom", options='{"componentName": "SettingsScreen"}')
+set_export_hint(layerId=..., type="custom", options='{"componentName": "PaymentScreen"}')
+
+# Self-contained functional units (single-role sub-components)
+set_export_hint(layerId=..., type="custom", options='{"componentName": "Clock"}')
+set_export_hint(layerId=..., type="custom", options='{"componentName": "NetworkIndicator"}')
+set_export_hint(layerId=..., type="custom", options='{"componentName": "StatusBar"}')
+
+# Repeated UI — extract once, reuse from many places
 set_export_hint(layerId=..., type="custom", options='{"componentName": "DeviceCard"}')
+set_export_hint(layerId=..., type="custom", options='{"componentName": "DigitButton"}')
 ```
-Do this for **every** screen frame and every repeated widget — one `type:"custom"` per generated `.ui.qml` file.
+For repeated UI, set `type:"custom"` on **one** representative instance only; apply `type:"skip"` to the duplicate sibling frames so they don't generate redundant `.ui.qml` files. The logic wrapper (or the parent design that uses `Repeater` / `ListView`) instantiates the extracted component multiple times.
 
 #### Stock UI controls (preferred for anything semantically standard, when QtQuick.Controls fits)
 
@@ -396,7 +413,7 @@ Build or preview to confirm the layout and interactions work correctly.
 
 - Never hand-edit `.ui.qml` files. Re-export if changes are needed.
 - All logic and event handlers belong in the logic wrapper, not in `.ui.qml`.
-- One `type:"custom"` per screen / per reusable widget — never let multiple screens collapse into one `.ui.qml`.
+- Extract aggressively — one `type:"custom"` per (a) top-level layer, (b) artboard / screen, (c) self-contained functional unit (clock, status bar, ...), (d) anything appearing more than once. Never let multiple screens or distinct functional units collapse into one `.ui.qml`. For repetitions, extract once and reuse — set `type:"skip"` on the duplicate frames.
 - **Logic is owned locally**: each component has its own `logic/X.qml`. Do not centralize behavior in `Main.qml` with deep alias chains like `mainWindow.statusBar.wifiToggle.onToggled: ...` — wire the toggle inside `logic/StatusBar.qml` instead.
 - Design files (`design/*.ui.qml`) reference children by their **public name** (no `UI` suffix); the qmldir resolves it to the logic wrapper at both runtime and standalone preview.
 - Design files import only framework modules (`QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, ...) — never project modules. That keeps every `.ui.qml` openable standalone.
