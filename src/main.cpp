@@ -191,38 +191,78 @@ After export, confirm there is **one `.ui.qml` per screen frame** (e.g. `HomeScr
 
 ### 6. Integrate generated files
 
-Use a **design/logic separation** pattern to keep exported files re-exportable while developing logic independently.
+Use a **design/logic separation** pattern so re-export only ever touches `design/`, never `logic/`. The two-tier shape also makes every design file independently previewable.
+
+**Core principle — logic is owned by the component, not by the parent:**
+Each screen and each reusable widget owns its own logic in its own `logic/X.qml` wrapper. **Do not** funnel everything up into a single `Main.qml` that reaches into children with long property-alias chains (`mainWindow.statusBar.wifiToggle.checked: ...`). A button knows how to be a button; the screen that hosts it should not be wiring the button's internals.
 
 **Recommended project structure (QML example):**
 ```
 qml/
-  design/     # Exported .ui.qml files (never hand-edit)
+  design/                    # Exported .ui.qml files — never hand-edit, always re-exportable
     HomeScreen.ui.qml
     SettingsScreen.ui.qml
-  logic/      # Logic wrappers
+    StatusBar.ui.qml
+    ButtonPower.ui.qml
+  logic/                     # Hand-written wrappers — inherit the matching UI and add behavior
     HomeScreen.qml
     SettingsScreen.qml
-  qmldir      # Type registration
+    StatusBar.qml
+  qmldir                     # Type registration — public names hide the UI/non-UI split
 ```
 
-**qmldir** registers each design file with a `UI` suffix and the logic file as the public type:
+**qmldir** has three registration patterns. Use whichever fits each component:
 ```
+# (a) Has logic wrapper — register both, public name points at the wrapper
 HomeScreenUI     1.0 design/HomeScreen.ui.qml
 HomeScreen       1.0 logic/HomeScreen.qml
-SettingsScreenUI 1.0 design/SettingsScreen.ui.qml
-SettingsScreen   1.0 logic/SettingsScreen.qml
+StatusBarUI      1.0 design/StatusBar.ui.qml
+StatusBar        1.0 logic/StatusBar.qml
+
+# (b) Pure design (no behavior needed) — register the .ui.qml directly under the public name
+ButtonPower      1.0 design/ButtonPower.ui.qml
+
+# (c) Pure logic (no design source — e.g. a code-only dialog or container)
+LeftWindow       1.0 logic/LeftWindow.qml
 ```
 
-**Logic wrapper** (`logic/HomeScreen.qml`) inherits from the design type and wires behavior **declaratively only**:
+**Cross-component references use the public name.**
+A design file composes children by their public name (no `UI` suffix). The qmldir resolves `StatusBar` to `logic/StatusBar.qml` at runtime, **and to the same wrapper in standalone preview**. Because every wrapper is structured `XUI { ... }`, the layout shows correctly either way — undefined bindings just leave properties at their defaults.
+
 ```qml
+// design/HomeScreen.ui.qml — references children by public name
+import QtQuick                          // imports stay framework-only (see below)
+
+Item {
+    StatusBar { id: header; ... }       // resolves via qmldir → logic/StatusBar.qml at runtime
+    SettingsScreen { id: settings; ... } // works for nested screens too
+    ButtonPower { id: btnPower; ... }    // pure-design components: same name, no wrapper
+}
+```
+
+**Design files import only framework modules** — `QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, etc. Never import your project's own QML module from a `.ui.qml`. That is what keeps `qml6 design/HomeScreen.ui.qml` openable standalone.
+
+**Logic wrapper** (`logic/HomeScreen.qml`) inherits from the matching `XUI` and wires behavior **declaratively only**:
+```qml
+import QtQuick
+import MyApp                            // project module is fine in logic/
+
 HomeScreenUI {
-    // Property bindings — never imperative assignment
+    id: root
+
+    // Property bindings into the design — never imperative assignment
     labelDeviceName.text: device.name
     wifiToggle.checked: network.wifiOn
 
     // Declarative signal handlers — never signal.connect()
     btnSettings.onClicked: stack.push("SettingsScreen.qml")
     wifiToggle.onToggled: network.setWifi(wifiToggle.checked)
+
+    // Logic-only sub-objects (timers, models, helper Items) belong here, not in design/
+    Timer {
+        interval: 60000; running: true; repeat: true; triggeredOnStart: true
+        onTriggered: root.currentTime = Qt.formatTime(new Date(), "HH:mm")
+    }
 }
 ```
 
@@ -235,24 +275,24 @@ Component.onCompleted: {
     btnSettings.clicked.connect(openSettings)
 }
 
-// ❌ Never: overlaying a MouseArea to make something tappable.
-//          If you want a click target, set its export hint to baseElement:"TouchArea"
-//          and re-export — do not patch over the design layer.
+// ❌ Never: overlaying a MouseArea on top of an embedded design item to make it tappable.
+//          If a region needs to react to touch, set its export hint to baseElement:"TouchArea"
+//          and re-export — do not patch over the design layer from logic.
+//          (A top-level MouseArea covering the whole wrapper is fine if the entire
+//          component is itself the click target — that is a logic-level concept, not a
+//          design-layer one.)
 MouseArea { anchors.fill: someEmbeddedItem; onClicked: ... }
-```
 
-Property bindings and `onXxx:` handlers are the only correct way to connect logic to the design layer. They re-evaluate automatically when sources change and survive re-export.
+// ❌ Never: long alias chains drilling into another component's internals from a parent
+homeScreen.statusBar.wifiToggle.onToggled: ...
+// ✓ Instead, that toggle is StatusBar's job — wire it inside logic/StatusBar.qml.
+```
 
 This way:
-- `design/HomeScreen.ui.qml` can be re-exported at any time without losing logic
-- `logic/HomeScreen.qml` develops independently against stable property aliases
-- The design file remains openable standalone with `qml6` for visual preview
-- Consumers just use `HomeScreen {}` and get the complete component
-
-For simple design-only components (buttons, icons, etc.) that need no logic wrapper, register them directly without the `UI` suffix:
-```
-ButtonPower 1.0 design/ButtonPower.ui.qml
-```
+- `design/HomeScreen.ui.qml` can be re-exported at any time without touching `logic/`
+- Each `logic/X.qml` lives next to the design it wraps; behavior stays close to the visuals it drives
+- Every design file remains openable standalone with `qml6` for visual review
+- Consumers just write `HomeScreen {}` and get the fully-wired component — they neither know nor care that `HomeScreenUI` exists
 
 **Re-skinning native controls** — when the export uses `type:"native"`, the generated `.ui.qml` references stock `QtQuick.Controls` types (`Switch`, `ComboBox`, etc.). Restyle them by adding a Qt Quick Controls 2 style module:
 
@@ -282,13 +322,16 @@ Build or preview to confirm the layout and interactions work correctly.
 - Never hand-edit `.ui.qml` files. Re-export if changes are needed.
 - All logic and event handlers belong in the logic wrapper, not in `.ui.qml`.
 - One `type:"custom"` per screen / per reusable widget — never let multiple screens collapse into one `.ui.qml`.
+- **Logic is owned locally**: each component has its own `logic/X.qml`. Do not centralize behavior in `Main.qml` with deep alias chains like `mainWindow.statusBar.wifiToggle.onToggled: ...` — wire the toggle inside `logic/StatusBar.qml` instead.
+- Design files (`design/*.ui.qml`) reference children by their **public name** (no `UI` suffix); the qmldir resolves it to the logic wrapper at both runtime and standalone preview.
+- Design files import only framework modules (`QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, ...) — never project modules. That keeps every `.ui.qml` openable standalone.
 - Names come from the layer's role (`HomeScreen`, `wifiToggle`); numeric suffixes (`Screen1`, `btn3`) are forbidden.
 - Button captions go through `textSource`, never through imperative `.text = ...` assignment in the logic wrapper.
-- Tappable regions go through `baseElement:"TouchArea"` in the design layer — never overlay a `MouseArea` from the logic wrapper.
+- Tappable regions go through `baseElement:"TouchArea"` in the design layer — never overlay a `MouseArea` from the logic wrapper to make an embedded item tappable.
 - Logic wrappers use property bindings and declarative `onXxx:` handlers only — no `Component.onCompleted` imperative assignment, no `signal.connect()`.
 - `type: "embed"` inlines the layer into the parent component file.
 - `type: "custom"` generates a separate reusable component file.
-- Use `qmldir` type renaming (`ComponentUI` / `Component`) to connect design and logic layers.
+- qmldir registers three patterns: `XUI`+`X` (has logic wrapper), `X` → `design/X.ui.qml` (pure design), `X` → `logic/X.qml` (pure logic, no design source).
 )"_s);
 
             QMcpPromptMessageContent content(text);
