@@ -131,7 +131,7 @@ Review the child layers and classify them:
   - **`type: "native"` + matching `baseElement`** (`Switch`, `ComboBox`, `TabBar` + `TabButton`, `SpinBox`, `Slider`, `CheckBox`, `RadioButton`, `Button`, `Button_Highlighted`) gives you the framework's interaction logic for free (`checked`, `model`, `value`, `currentIndex`, ...). The catch: the layer's own visuals are dropped and the framework draws its default look, so you must build a **custom QtQuick.Controls 2 style module** to make the control actually look like the design (one `.qml` per control type), then activate it with `QQuickStyle::setStyle("YourStyle")`.
   - **`type: "embed"` + tappable layers** (see "Tappable design layers" below) keeps the design's exact visuals as images and makes them touch-sensitive, but you re-implement the control's state machinery (toggle, selection, model, etc.) yourself in the logic wrapper.
   - Pick `native` when (a) you will build a style module anyway, or one already exists for the target style, **and** (b) the framework primitive cleanly covers the control's behavior. Pick `embed` when the visuals are heavily custom or one-off and a style module would be more work than re-implementing the simple state. **Avoid `type: "custom"` for things that ARE stock controls** — re-implementing `model` / `value` / `checked` in custom QML throws away the framework's interaction logic and ages badly.
-- **Tappable design layers (icons, sidebar tiles, list rows, any image/text that should react to touch)** — use `type: "embed"` + `interactive: true` so the exporter wraps the layer's rendered content in a touch region (`MouseArea` for QtQuick / Slint, `GestureDetector` for Flutter, `.onTapGesture` for SwiftUI, `Pressable` for React Native, `LV_EVENT_CLICKED`-eligible object for LVGL) *inside* the generated component file with a stable `id`. The visual stays AND the region becomes tappable. Use this for embedded-style touchscreen UIs that don't go through stock control sets like `QtQuick.Controls`. **Never** overlay a fresh tap handler from the logic wrapper onto an embedded design item — every hit area lives in the design layer and is re-export-stable.
+- **Tappable design layers (icons, sidebar tiles, list rows, any image/text that should react to touch)** — use `type: "embed"` + `interactive: true` so the exporter wraps the layer's rendered content in a touch region (`MouseArea` for QtQuick, `TouchArea` for Slint, `GestureDetector` for Flutter, `.onTapGesture` for SwiftUI, `Pressable` for React Native, `LV_EVENT_CLICKED`-eligible object for LVGL) *inside* the generated component file with a stable `id`. The visual stays AND the region becomes tappable. Use this for embedded-style touchscreen UIs that don't go through stock control sets like `QtQuick.Controls`. **Never** overlay a fresh tap handler from the logic wrapper onto an embedded design item — every hit area lives in the design layer and is re-export-stable.
 - **Bare hit-only regions (transparent overlay, enlarged hit-box beyond an icon)** — use `type: "native"` + `baseElement: "TouchArea"`. The output is a bare `MouseArea` with no visual content. Use this only when you genuinely want no visual; otherwise prefer the previous bullet.
 - **Text labels (dynamically updated)** — assign an `id` so they become property aliases.
 - **Decorative elements** — no hint needed (exported by default).
@@ -143,8 +143,8 @@ Review the child layers and classify them:
 #### `type` values at a glance
 
 - `embed` — keep the layer's own visuals (image / text / shape). Add `interactive: true` to make the layer tappable while preserving its visual content. **Embed is additive** — the layer's visual stays; hints decorate it.
-- `native` — replace the layer with a framework-provided stock control (`Switch`, `ComboBox`, `Button`, ...) chosen via `baseElement`. **Native is substitutive** — the layer's own visuals are dropped; the framework draws the control via its style. `baseElement: "TouchArea"` is a special native value that emits a bare `MouseArea` with no visual content (use it for transparent / extended hit regions).
-- `custom` — emit the layer (and its descendants) as a separate reusable component file (`.ui.qml`).
+- `native` — replace the layer with a framework-provided stock control (`Switch`, `ComboBox`, `Button`, ...) chosen via `baseElement`. **Native is substitutive** — the layer's own visuals are dropped; the framework draws the control via its style. `baseElement: "TouchArea"` is a special native value that emits a bare touch region (`MouseArea` for QtQuick, `TouchArea` for Slint, the framework equivalent for other targets) with no visual content — use it for transparent / extended hit regions.
+- `custom` — emit the layer (and its descendants) as a separate reusable component file (e.g. `.ui.qml` for QtQuick, `.slint` for Slint, `.dart` for Flutter, `.swift` for SwiftUI, `.tsx` for React Native, `.xml` for LVGL).
 - `merge` — composite the layer into a single image with its parent. **Do not set this manually**; the exporter applies it automatically to the layers consumed by `textSource` / `imageSource`.
 - `skip` — omit from export entirely (use for helper / guide / reference layers, or for duplicate frames of an already-extracted reusable component).
 
@@ -500,14 +500,14 @@ The **principle** is the same for every target — keep the generated code re-ex
       images/
     shared/            # hand-written shared widgets — generated/ .slint files import them by name
       AppHeader.slint
-    variants/          # hand-written .slint files that compose / extend a generated component:
-      HomeScreenWithLogic.slint   # adds extra callbacks, property declarations, or composes
-                                  # the generated component with shared widgets — NOT host-language
-                                  # logic, which still lives in src/main.rs / .cpp / .ts / .py
+    variants/          # hand-written .slint files extending generated components
+      HomeScreenWithLogic.slint
   src/                 # the host language — Rust / C++ / Node / Python
-    main.rs            # instantiates HomeScreen via slint::ComponentHandle, sets properties, attaches callbacks
+    main.rs            # instantiates HomeScreen via slint::ComponentHandle
   ```
-  Re-export only into `slint/generated/`. Hand-written `.slint` files in `slint/shared/` and `slint/variants/` are safe because `do_export` only writes the components named by `type:"custom"` hints (and assets); files with unrelated names in the same `outputDir` would not be touched, but keeping them in a sibling directory removes any doubt and makes the boundary visible.
+  Re-export only into `slint/generated/`. Hand-written `.slint` files in `slint/shared/` and `slint/variants/` are safe because `do_export` only writes the components named by `type:"custom"` hints (plus assets); files with unrelated names in the same `outputDir` would not be touched, but keeping them in a sibling directory removes any doubt and makes the boundary visible.
+
+  `slint/variants/HomeScreenWithLogic.slint` is the place to add extra callbacks, declare additional properties, or compose the generated component with shared widgets at the markup level. It is *not* the place for application logic — actual host-language code (Rust / C++ / Node / Python) lives under `src/`, instantiates the component via `slint::ComponentHandle`, sets properties and attaches callbacks.
 - **Flutter** (`*.dart` files; snake_case file names). The generated `.dart` files are stateless `Widget` classes. Pattern:
   ```
   lib/
