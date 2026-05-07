@@ -360,8 +360,46 @@ ButtonPower      1.0 design/ButtonPower.ui.qml
 LeftWindow       1.0 logic/LeftWindow.qml
 ```
 
+**Qt 6 / `qt_add_qml_module` wiring — two qmldir files are required.**
+The single qmldir above is the *module* qmldir, but it is not enough on its own. When `design/MainWindow.ui.qml` says `Header { ... }`, Qt 6's QML resolver runs a same-directory scan first and would auto-register the sibling `design/Header.ui.qml` as `Header`, hiding the logic wrapper. To make the public-name reference actually land on the logic wrapper, ship a **design overlay qmldir** alongside the design files that re-points the bare name back to `logic/`:
+
+```
+# (1) Module qmldir, deployed at qrc:/<URI>/qmldir
+/qmldir
+  module <URI>
+  HeaderUI 1.0 qml/design/Header.ui.qml
+  Header   1.0 qml/logic/Header.qml
+  ...
+
+# (2) Design overlay — source file lives OUTSIDE design/ but is aliased into it at build time
+/qml/design_imports.qmldir
+  Header 1.0 ../logic/Header.qml
+  ...
+```
+
+Inside `design/MainWindow.ui.qml`, `Header { ... }` is now resolved by the **same-directory** overlay (an explicit qmldir entry in the file's own directory wins over Qt's basename auto-registration), so it lands on `../logic/Header.qml` — the logic wrapper.
+
+**Re-export-safety alias trick.** The overlay's source file lives outside `design/` (e.g. `qml/design_imports.qmldir`) so `do_export`, which only writes inside `design/`, cannot overwrite it. CMake aliases it onto the runtime path the resolver looks at:
+
+```cmake
+qt_add_qml_module(myapp
+    URI MyApp
+    QML_FILES
+        qml/design/MainWindow.ui.qml
+        qml/design/Header.ui.qml
+        qml/logic/Header.qml
+        ...
+    RESOURCES
+        qml/design_imports.qmldir
+)
+set_source_files_properties(qml/design_imports.qmldir
+    PROPERTIES QT_RESOURCE_ALIAS "qml/design/qmldir")
+```
+
+At runtime the overlay is reachable as `qml/design/qmldir`; at build time it is a regular versioned file in `qml/`, untouched by re-export.
+
 **Cross-component references use the public name.**
-A design file composes children by their public name (no `UI` suffix). The qmldir resolves `StatusBar` to `logic/StatusBar.qml` at runtime, **and to the same wrapper in standalone preview**. Because every wrapper is structured `XUI { ... }`, the layout shows correctly either way — undefined bindings just leave properties at their defaults.
+A design file composes children by their public name (no `UI` suffix). With the design overlay above in place, `StatusBar` inside `design/MainWindow.ui.qml` resolves to `logic/StatusBar.qml` at runtime. **In standalone preview** the same resolution only works when the preview tool sees the overlay (e.g. `qml6` launched with the project's QML import path / qrc-mounted module). A bare `qml6 design/MainWindow.ui.qml` against a checkout that only has the `design/` directory visible has no overlay to consult and falls back to Qt's basename auto-registration, so `StatusBar` resolves to `design/StatusBar.ui.qml` — the design layer alone, without the wrapper. Both modes render the layout (every wrapper is `XUI { ... }` so visuals match), but only the first one applies the wrapper's bindings.
 
 ```qml
 // design/HomeScreen.ui.qml — references children by public name
@@ -489,6 +527,15 @@ QQuickStyle::setStyle("MyStyle");
 
 This keeps the design files re-exportable and lets the standard control APIs (`model`, `value`, `checked`, `currentIndex`, ...) drive the runtime — no custom wrappers needed.
 
+#### NG patterns (Qt 6) — these look like shortcuts but do not work
+
+The following do **not** rescue a project where the design overlay is missing or misconfigured; they invariably break under re-export or simply do not bend Qt 6's resolver the way one might hope:
+
+- **Editing `design/*.ui.qml` to add `import <Module>`.** The next `do_export` overwrites the file and the import is gone. Imports for the design layer must come from `import QtQuick` only (and the design overlay handles project-name resolution); never patch the generated file.
+- **Moving `design/MainWindow.ui.qml` outside `design/` to escape re-export.** Re-export still emits a `MainWindow.ui.qml` into `design/` next time, so you end up with two copies that drift apart. Keep generated files where the exporter writes them, and use the alias trick above to keep the overlay safe.
+- **Putting the design overlay one level up and expecting cascade.** Directory-overlay qmldirs apply to *their own* directory only — they do not cascade into subdirectories. The overlay must sit at runtime path `qml/design/qmldir` (via the QT_RESOURCE_ALIAS shown above), not at `qml/qmldir`.
+- **Trying to rename the design auto-registration via `QT_QML_SOURCE_TYPENAME` to e.g. `HeaderUI`.** This sets the type *name* the file registers under, but it does not suppress Qt's same-directory basename scan from also registering `Header` directly to the `.ui.qml`. The same-directory overlay qmldir is still the correct way to override the bare name.
+
 #### Beyond QtQuick: framework-specific separation patterns
 
 The **principle** is the same for every target — keep the generated code re-exportable and host the logic separately — but the **mechanism** differs because each framework has its own way of attaching behavior. Apply the pattern that fits your target:
@@ -601,7 +648,7 @@ For every target, verify:
 
 - Generated component files are `*.ui.qml`; the per-screen wrapper is a `*.qml` that inherits the matching `XUI`.
 - Export with `outputDir="qml/design"` so the result drops straight into the project layout. Asset images land in `qml/design/images/` and are referenced relatively by the `.ui.qml` files.
-- Design files (`design/*.ui.qml`) reference children by their **public name** (no `UI` suffix); the qmldir resolves it to the logic wrapper at both runtime and standalone preview.
+- Design files (`design/*.ui.qml`) reference children by their **public name** (no `UI` suffix). At runtime the resolution lands on the logic wrapper *only because* of a same-directory design overlay qmldir (typically supplied as a hand-written `design_imports.qmldir` aliased onto `qml/design/qmldir` via `QT_RESOURCE_ALIAS`); without it Qt 6's basename scan registers the sibling `.ui.qml` as the bare name. Standalone preview honors the overlay only when the preview tool sees it (e.g. `qml6` launched with the module's import path); a bare `qml6 design/X.ui.qml` against just the `design/` files falls back to the design layer.
 - Design files import only framework modules (`QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, ...) — never project modules. That keeps every `.ui.qml` openable standalone.
 - Logic wrappers use property bindings and declarative `onXxx:` handlers — `Component.onCompleted` imperative assignment and `signal.connect()` are forbidden, but the rest of declarative QML (states, transitions, Connections, function definitions, new property declarations, sub-objects like Timer / Model / ...) is fair game.
 - qmldir registers three patterns: `XUI`+`X` (has logic wrapper), `X` → `design/X.ui.qml` (pure design), `X` → `logic/X.qml` (pure logic, no design source).
