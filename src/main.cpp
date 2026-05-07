@@ -91,7 +91,9 @@ Returns every font family the design references and how it currently resolves on
 ```
 set_font_mapping(fromFont="OldFont-Bold", toFont="Roboto", global=false)
 ```
-- `global` is required (no default). `false` scopes the mapping to the currently loaded design (saved next to the design's hint file); `true` scopes it system-wide (saved in the user-level mapping store) — use the latter for fonts you always remap the same way, regardless of project.
+- `global` is required (no default).
+  - `global=true` — scope is system-wide. The mapping is **immediately persisted** to the user-level mapping store. Use this for fonts you always remap the same way regardless of project (e.g. swapping a paid font for a free equivalent everywhere).
+  - `global=false` — scope is the currently loaded design only. The mapping is held **in memory** until you call `save_hints` (step 6); without that call the mapping is lost when the MCP server restarts.
 - Pass an empty `toFont` to clear a mapping.
 
 Mappings change the value the exporter writes into the generated component's font attribute (`font.family` for QtQuick, the framework-equivalent attribute for other targets). With the mapping above, a Text layer authored as `OldFont-Bold` exports as if it had been authored as `Roboto`.
@@ -119,10 +121,10 @@ Review the child layers and classify them:
 - **What becomes its own `.ui.qml` file (`type:"custom"` with a role-based PascalCase `componentName`)** — extract aggressively. Apply all three rules below; if a layer matches any of them it gets its own component file:
   1. **Each artboard / each visible screen / each route** (Home, Settings, DeviceList, PaymentScreen, ...). One `.ui.qml` per screen.
      *(In Figma, every top-level frame is a screen — so this and "top-level frame" coincide. In PSD there are no artboards per se; treat each top-level group that *represents a screen* this way. Do **not** blindly extract every PSD root group: a background-only group or a decoration group should remain `embed` unless it also satisfies rule 2 or 3.)*
-  2. **Self-contained functional units** — anything with an identifiable, single role you would name with one noun: a clock, a network indicator, a status bar, a navigation header, a search panel. Extract these even when they appear only once, so the logic that owns the function lives next to its visual (in a per-component `logic/X.qml`) rather than getting buried in the parent screen.
+  2. **Self-contained functional units** — anything with an identifiable, single role you would name with one noun: a clock, a network indicator, a status bar, a navigation header, a search panel. Extract these even when they appear only once, so the logic that owns the function lives next to its visual (in a per-component wrapper — `logic/X.qml` for QtQuick, `screens/<name>.dart` for Flutter, `Sources/Screens/X.swift` for SwiftUI, etc. — see step 7) rather than getting buried in the parent screen.
   3. **Anything that appears more than once** — cards, list rows, repeated buttons, toolbar icons. Export the design *once* as a `type:"custom"` component, then instantiate it from each call site (and from `Repeater` / `ListView` delegates in logic). Mark the duplicate sibling frames `type:"skip"` so they don't generate redundant `.ui.qml` files.
 
-  **Never** leave screens / artboards / functional units as the default embed — that produces one giant `MainScreen.ui.qml` with everything inlined, and breaks both per-component logic ownership and re-exportability.
+  **Never** leave screens / artboards / functional units as the default embed — that produces one giant component file (e.g. `MainScreen.ui.qml` for QtQuick, `main_screen.dart` for Flutter, the equivalent for other targets) with everything inlined, and breaks both per-component logic ownership and re-exportability.
 - **Stock UI controls — `type: "native"` (substitutive) vs. `type: "embed"` (additive)**. When a Figma node is *semantically* a standard control (toggle, dropdown, tab segment, numeric stepper, button, ...), there is a real tradeoff:
   - **`type: "native"` + matching `baseElement`** (`Switch`, `ComboBox`, `TabBar` + `TabButton`, `SpinBox`, `Slider`, `CheckBox`, `RadioButton`, `Button`, `Button_Highlighted`) gives you the framework's interaction logic for free (`checked`, `model`, `value`, `currentIndex`, ...). The catch: the layer's own visuals are dropped and the framework draws its default look, so you must build a **custom QtQuick.Controls 2 style module** to make the control actually look like the design (one `.qml` per control type), then activate it with `QQuickStyle::setStyle("YourStyle")`.
   - **`type: "embed"` + tappable layers** (see "Tappable design layers" below) keeps the design's exact visuals as images and makes them touch-sensitive, but you re-implement the control's state machinery (toggle, selection, model, etc.) yourself in the logic wrapper.
@@ -133,6 +135,8 @@ Review the child layers and classify them:
 - **Decorative elements** — no hint needed (exported by default).
 
 ### 4. Set export hints
+
+*(Examples below are shown in QtQuick output for concreteness, but the rules — `type`, `interactive`, `textSource`, `properties`, naming, anchorMode, skip, etc. — are framework-agnostic and apply identically to the Slint, Flutter, SwiftUI, React Native and LVGL targets. Each target translates the same hint into its own idiom — see step 7 for the per-framework layout.)*
 
 #### `type` values at a glance
 
@@ -305,7 +309,11 @@ After export, confirm there is **one component file per screen frame** (e.g. `Ho
 save_hints()
 ```
 
-Persists every hint you set in step 4 (and every font mapping you set in step 2) to a `.psd_` sidecar file next to the design. **This is independent of `do_export`** — exporting works directly off the in-memory hints set this session, so you can run `do_export` without ever calling `save_hints`. The reason to call it is so the next session (next MCP server start, next collaborator opening the same design) can pick up where you left off rather than re-classifying the layer tree from scratch.
+Persists every hint you set in step 4, **and** the per-design (`global=false`) font mappings from step 2, to a sidecar JSON file. For PSD sources the sidecar is written next to the file as `<design>.psd_`. For Figma sources there is no design file path; the sidecar is written to `<figmaFileName>.psd_` in the MCP server's working directory by default — pass `import_figma(options='{"hintFile": "<path>"}')` at load time to control where it lives (and to load it back).
+
+(Global font mappings — `set_font_mapping(..., global=true)` from step 2 — are persisted *immediately* by `set_font_mapping` itself to the user-level store and do not depend on this step.)
+
+**This is independent of `do_export`** — exporting works directly off the in-memory hints set this session, so you can run `do_export` without ever calling `save_hints`. The reason to call it is so the next session (next MCP server start, next collaborator opening the same design) can pick up where you left off rather than re-classifying the layer tree from scratch.
 
 Call this once you are happy with the hint configuration, typically after step 5 once you have visually confirmed the export looks right.
 
@@ -488,8 +496,10 @@ The **principle** is the same for every target — keep the generated code re-ex
       images/
     shared/            # hand-written shared widgets — generated/ .slint files import them by name
       AppHeader.slint
-    variants/          # hand-written .slint files that wrap a generated component to add logic
-      HomeScreenWithLogic.slint
+    variants/          # hand-written .slint files that compose / extend a generated component:
+      HomeScreenWithLogic.slint   # adds extra callbacks, property declarations, or composes
+                                  # the generated component with shared widgets — NOT host-language
+                                  # logic, which still lives in src/main.rs / .cpp / .ts / .py
   src/                 # the host language — Rust / C++ / Node / Python
     main.rs            # instantiates HomeScreen via slint::ComponentHandle, sets properties, attaches callbacks
   ```
@@ -555,6 +565,7 @@ Preview / build the result. Concrete commands:
 - **Flutter**: `flutter run` against the host app, or use a `widgetbook` story for the generated widget alone.
 - **SwiftUI**: open the Xcode project, use the Canvas preview on the generated `View` struct.
 - **React Native**: `npx react-native start` against the host app, or render the generated component in Storybook.
+- **LVGL**: build and flash the host C application targeting the device (or run the host's simulator / `lv_demos`-style harness) so the runtime parses the generated XML via `lv_xml_*` and lays out the screen.
 
 For every target, verify:
 - the layout matches the design at the canonical resolution,
@@ -575,7 +586,7 @@ For every target, verify:
 - Button captions go through `textSource`, never through assigning the caption from the wrapper / view-model.
 - Tappable design layers (image/icon + tap) go through `type:"embed"` + `interactive:true`; bare hit-only regions go through `type:"native"` + `baseElement:"TouchArea"`. Never overlay a fresh hit area on top of an embedded design item from the wrapper.
 - Choosing `type:"native"` for stock-control nodes is a tradeoff: you get framework semantics (`checked`, `model`, `value`, ...) but must provide a style/theming layer to match the design. `type:"embed"` keeps the exact visuals but you re-implement state. Decide per-control, not as a blanket rule.
-- Wrappers wire behavior **declaratively** — bindings, declarative event handlers, declarative state machines (where the framework supports them). No imperative wiring of generated layers from constructor / lifecycle hooks.
+- Wrappers wire behavior through the generated component's **documented surface** — props / `@Binding` / `properties` / id-named handles / callbacks. Don't reach into a generated component to mutate its internals after construction; pass the value through the documented interface instead. (Framework-native lifecycle hooks like `initState`, `useEffect`, `onAppear` are fine for the *wrapper's own* state — they just shouldn't be used as a back door to patch the generated layer.)
 - `properties` selects which design attributes are exposed for runtime override (visible / position / size / color / text / font / image). `translatable` is special: it changes the output template to wrap text in the framework's translation primitive (`qsTr(...)` / `@tr(...)` / etc.).
 - Dynamic lists are not exported as a list/repeater construct; export one delegate as `type:"custom"` and instantiate the view in the wrapper / host.
 
