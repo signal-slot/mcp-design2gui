@@ -77,6 +77,8 @@ A Figma personal-access token is required. The MCP server picks it up from the `
 
 If the file has multiple pages, call `list_figma_pages` first to see them and then pass the desired `pageIndex` in `options`.
 
+If you intend to call `save_hints` later (step 6), also pass `options='{"hintFile": "<path>"}'` here so the sidecar JSON lands at a known location and is auto-loaded the next time you call `import_figma` with the same path. Without this, the sidecar lands in the MCP server's working directory under `<figmaFileName>.psd_`, which is fine for one-off use but easy to lose track of across sessions.
+
 Both calls return file information including dimensions and layer count.
 
 ### 2. Confirm fonts (sanity check before any further work)
@@ -118,18 +120,18 @@ Helper tools for tricky cases:
 
 Review the child layers and classify them:
 
-- **What becomes its own `.ui.qml` file (`type:"custom"` with a role-based PascalCase `componentName`)** — extract aggressively. Apply all three rules below; if a layer matches any of them it gets its own component file:
-  1. **Each artboard / each visible screen / each route** (Home, Settings, DeviceList, PaymentScreen, ...). One `.ui.qml` per screen.
+- **What becomes its own component file (`type:"custom"` with a role-based PascalCase `componentName`)** — extract aggressively. Apply all three rules below; if a layer matches any of them it gets its own component file:
+  1. **Each artboard / each visible screen / each route** (Home, Settings, DeviceList, PaymentScreen, ...). One component file per screen.
      *(In Figma, every top-level frame is a screen — so this and "top-level frame" coincide. In PSD there are no artboards per se; treat each top-level group that *represents a screen* this way. Do **not** blindly extract every PSD root group: a background-only group or a decoration group should remain `embed` unless it also satisfies rule 2 or 3.)*
   2. **Self-contained functional units** — anything with an identifiable, single role you would name with one noun: a clock, a network indicator, a status bar, a navigation header, a search panel. Extract these even when they appear only once, so the logic that owns the function lives next to its visual (in a per-component wrapper — `logic/X.qml` for QtQuick, `screens/<name>.dart` for Flutter, `Sources/Screens/X.swift` for SwiftUI, etc. — see step 7) rather than getting buried in the parent screen.
-  3. **Anything that appears more than once** — cards, list rows, repeated buttons, toolbar icons. Export the design *once* as a `type:"custom"` component, then instantiate it from each call site (and from `Repeater` / `ListView` delegates in logic). Mark the duplicate sibling frames `type:"skip"` so they don't generate redundant `.ui.qml` files.
+  3. **Anything that appears more than once** — cards, list rows, repeated buttons, toolbar icons. Export the design *once* as a `type:"custom"` component, then instantiate it from each call site (and from `Repeater` / `ListView` delegates in logic). Mark the duplicate sibling frames `type:"skip"` so they don't generate redundant component files.
 
   **Never** leave screens / artboards / functional units as the default embed — that produces one giant component file (e.g. `MainScreen.ui.qml` for QtQuick, `main_screen.dart` for Flutter, the equivalent for other targets) with everything inlined, and breaks both per-component logic ownership and re-exportability.
 - **Stock UI controls — `type: "native"` (substitutive) vs. `type: "embed"` (additive)**. When a Figma node is *semantically* a standard control (toggle, dropdown, tab segment, numeric stepper, button, ...), there is a real tradeoff:
   - **`type: "native"` + matching `baseElement`** (`Switch`, `ComboBox`, `TabBar` + `TabButton`, `SpinBox`, `Slider`, `CheckBox`, `RadioButton`, `Button`, `Button_Highlighted`) gives you the framework's interaction logic for free (`checked`, `model`, `value`, `currentIndex`, ...). The catch: the layer's own visuals are dropped and the framework draws its default look, so you must build a **custom QtQuick.Controls 2 style module** to make the control actually look like the design (one `.qml` per control type), then activate it with `QQuickStyle::setStyle("YourStyle")`.
   - **`type: "embed"` + tappable layers** (see "Tappable design layers" below) keeps the design's exact visuals as images and makes them touch-sensitive, but you re-implement the control's state machinery (toggle, selection, model, etc.) yourself in the logic wrapper.
   - Pick `native` when (a) you will build a style module anyway, or one already exists for the target style, **and** (b) the framework primitive cleanly covers the control's behavior. Pick `embed` when the visuals are heavily custom or one-off and a style module would be more work than re-implementing the simple state. **Avoid `type: "custom"` for things that ARE stock controls** — re-implementing `model` / `value` / `checked` in custom QML throws away the framework's interaction logic and ages badly.
-- **Tappable design layers (icons, sidebar tiles, list rows, any image/text that should react to touch)** — use `type: "embed"` + `interactive: true` so the exporter wraps the layer's rendered content in a `MouseArea` *inside* the `.ui.qml` with a stable `id`. The visual stays AND the region becomes tappable. Use this for embedded-style touchscreen UIs that don't go through `QtQuick.Controls`. **Never** overlay a `MouseArea` from the logic wrapper onto an embedded design item — every hit area lives in the design layer and is re-export-stable.
+- **Tappable design layers (icons, sidebar tiles, list rows, any image/text that should react to touch)** — use `type: "embed"` + `interactive: true` so the exporter wraps the layer's rendered content in a touch region (`MouseArea` for QtQuick / Slint, `GestureDetector` for Flutter, `.onTapGesture` for SwiftUI, `Pressable` for React Native, `LV_EVENT_CLICKED`-eligible object for LVGL) *inside* the generated component file with a stable `id`. The visual stays AND the region becomes tappable. Use this for embedded-style touchscreen UIs that don't go through stock control sets like `QtQuick.Controls`. **Never** overlay a fresh tap handler from the logic wrapper onto an embedded design item — every hit area lives in the design layer and is re-export-stable.
 - **Bare hit-only regions (transparent overlay, enlarged hit-box beyond an icon)** — use `type: "native"` + `baseElement: "TouchArea"`. The output is a bare `MouseArea` with no visual content. Use this only when you genuinely want no visual; otherwise prefer the previous bullet.
 - **Text labels (dynamically updated)** — assign an `id` so they become property aliases.
 - **Decorative elements** — no hint needed (exported by default).
@@ -319,7 +321,9 @@ Call this once you are happy with the hint configuration, typically after step 5
 
 ### 7. Integrate generated files
 
-Use a **design/logic separation** pattern so re-export only ever touches `design/`, never `logic/`. The two-tier shape also makes every design file independently previewable.
+This step describes the integration pattern for QtQuick in detail (it is the most complete worked example), then **Beyond QtQuick** translates the same pattern into Slint / Flutter / SwiftUI / React Native / LVGL idioms. If you are targeting a non-QtQuick framework, you can skim the QtQuick subsections for the underlying principle and then jump to the Beyond QtQuick block for your target's concrete layout.
+
+Use a **design/logic separation** pattern so re-export only ever touches the generated directory, never the hand-written wrapper directory. The two-tier shape also makes every design file independently previewable.
 
 **Core principle — logic is owned by the component, not by the parent:**
 Each screen and each reusable widget owns its own logic in its own `logic/X.qml` wrapper. **Do not** funnel everything up into a single `Main.qml` that reaches into children with long property-alias chains (`mainWindow.statusBar.wifiToggle.checked: ...`). A button knows how to be a button; the screen that hosts it should not be wiring the button's internals.
