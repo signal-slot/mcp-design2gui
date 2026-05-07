@@ -281,8 +281,10 @@ Use for guide grids, comments, off-canvas reference art, or anything that should
 
 Export directly into the project's `qml/design/` (or the equivalent generated-code directory for your target framework — see step 7) so the generated files land in their final location with no manual moving afterwards:
 ```
-do_export(format="<exporter key>", outputDir="qml/design", options='{}')
+do_export(format="<exporter key>", outputDir="qml/design", options='{"makeCompact": true}')
 ```
+
+**Always pass `makeCompact: true`.** Folder / group / frame layers in the design source frequently have no explicit rect of their own — common for logical groupings around a button + caption, around an input area, or around any sub-screen container. Without `makeCompact`, such folders fall back to a parent-filling wrapper in the output (`anchors.fill: parent` for QtQuick, the equivalent for other targets). When the same folder also carries a hint with an `id`, `interactive: true`, or `type: "custom"` / `type: "native"`, the resulting wrapper covers the entire parent and intercepts input destined for sibling elements — for example, a "Confirm" button group that swallows every digit-key click on a number-pad screen. With `makeCompact: true` the exporter sizes each folder to the bounding box of its children, so each generated wrapper has the same footprint as its visible content.
 
 If the format has not been chosen yet, call `list_exporters` to see available formats and ask the user to pick one.
 
@@ -593,6 +595,7 @@ For every target, verify:
 - Wrappers wire behavior through the generated component's **documented surface** — props / `@Binding` / `properties` / id-named handles / callbacks. Don't reach into a generated component to mutate its internals after construction; pass the value through the documented interface instead. (Framework-native lifecycle hooks like `initState`, `useEffect`, `onAppear` are fine for the *wrapper's own* state — they just shouldn't be used as a back door to patch the generated layer.)
 - `properties` selects which design attributes are exposed for runtime override (visible / position / size / color / text / font / image). `translatable` is special: it changes the output template to wrap text in the framework's translation primitive (`qsTr(...)` / `@tr(...)` / etc.).
 - Dynamic lists are not exported as a list/repeater construct; export one delegate as `type:"custom"` and instantiate the view in the wrapper / host.
+- Always export with `do_export(options='{"makeCompact": true}')`. Without it, folder layers without an explicit rect produce parent-filling wrappers that intercept sibling input — see step 5.
 
 ### QtQuick specifics
 
