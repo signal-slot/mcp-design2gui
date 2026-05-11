@@ -444,9 +444,11 @@ HomeScreenUI {
         onTriggered: root.currentTime = Qt.formatTime(new Date(), "HH:mm")
     }
 
-    // 6) Connections — fine, when reacting to signals from objects you can't onXxx: directly on
+    // 6) Connections — only for objects with no direct access path (singletons, runtime-created
+    //    targets, model rows, ...). For any generated child you already have an id for, write
+    //    foo.onXxx: ... directly — Connections { target: foo } is a redundant detour.
     Connections {
-        target: someExternalSignalSource
+        target: deviceService                    // a project singleton — no id-named handle
         function onDeviceListUpdated() { /* ... */ }
     }
 
@@ -456,7 +458,9 @@ HomeScreenUI {
 }
 ```
 
-The full QML declarative toolkit is allowed in the logic wrapper — what is forbidden is *imperative wiring of the design layer*: `Component.onCompleted` blocks that assign properties or call `signal.connect()`, or new `MouseArea` instances that overlay an embedded design item to make it tappable. Everything else QML lets you write declaratively (states, transitions, behaviors, JS helper functions, Connections, new property declarations, signal declarations, ...) is fair game.
+The full QML declarative toolkit is allowed in the logic wrapper — what is forbidden is *imperative wiring of the design layer*: `Component.onCompleted` blocks that assign properties or call `signal.connect()`, or new `MouseArea` instances that overlay an embedded design item to make it tappable. Everything else QML lets you write declaratively (states, transitions, behaviors, JS helper functions, new property declarations, signal declarations, sub-objects like Timer / Model / ...) is fair game.
+
+One important restriction on `Connections {}` and `Binding {}` element forms: do **not** target a generated child of the inherited design — the wrapper inherits the `XUI` so every id-named child is already in scope and reachable as `child.prop` / `child.onXxx`. Use those direct forms. `Connections { target: foo }` and `Binding { target: foo; property: ...; value: ... }` for an in-scope `foo` is a redundant detour that hides the wiring and adds an extra binding layer for the runtime to resolve. Keep `Connections {}` and `Binding {}` for the cases where there is no direct path: project singletons, model rows obtained via JS, dynamically-created objects, attached properties.
 
 **Forbidden patterns in the logic wrapper:**
 
@@ -478,6 +482,15 @@ MouseArea { anchors.fill: someEmbeddedItem; onClicked: ... }
 // ❌ Never: long alias chains drilling into another component's internals from a parent
 homeScreen.statusBar.wifiToggle.onToggled: ...
 // ✓ Instead, that toggle is StatusBar's job — wire it inside logic/StatusBar.qml.
+
+// ❌ Never: Connections {} or Binding {} targeting a generated child that is already in scope.
+//          The wrapper inherits the design (XUI { ... }) so every id-named child is reachable
+//          directly — use child.prop: ... / child.onXxx: ... instead.
+Connections { target: wifiToggle; function onToggled() { ... } }
+Binding     { target: labelDeviceName; property: "text"; value: device.name }
+// ✓ Instead:
+wifiToggle.onToggled: ...
+labelDeviceName.text: device.name
 ```
 
 This way:
@@ -650,7 +663,7 @@ For every target, verify:
 - Export with `outputDir="qml/design"` so the result drops straight into the project layout. Asset images land in `qml/design/images/` and are referenced relatively by the `.ui.qml` files.
 - Design files (`design/*.ui.qml`) reference children by their **public name** (no `UI` suffix). At runtime the resolution lands on the logic wrapper *only because* of a same-directory design overlay qmldir (typically supplied as a hand-written `design_imports.qmldir` aliased onto `qml/design/qmldir` via `QT_RESOURCE_ALIAS`); without it Qt 6's basename scan registers the sibling `.ui.qml` as the bare name. Standalone preview honors the overlay only when the preview tool sees it (e.g. `qml6` launched with the module's import path); a bare `qml6 design/X.ui.qml` against just the `design/` files falls back to the design layer.
 - Design files import only framework modules (`QtQuick`, `QtQuick.Controls`, `QtQuick.Shapes`, ...) — never project modules. That keeps every `.ui.qml` openable standalone.
-- Logic wrappers use property bindings and declarative `onXxx:` handlers — `Component.onCompleted` imperative assignment and `signal.connect()` are forbidden, but the rest of declarative QML (states, transitions, Connections, function definitions, new property declarations, sub-objects like Timer / Model / ...) is fair game.
+- Logic wrappers use property bindings and declarative `onXxx:` handlers; `Component.onCompleted` imperative assignment and `signal.connect()` are forbidden. The rest of declarative QML (states, transitions, function definitions, new property declarations, sub-objects like Timer / Model / ...) is fair game, with one restriction: `Connections {}` and `Binding {}` must not target a generated child that is already in scope — use `child.prop: ...` / `child.onXxx: ...` directly. Keep `Connections {}` / `Binding {}` for targets with no direct access (singletons, runtime-created objects, attached properties).
 - qmldir registers three patterns: `XUI`+`X` (has logic wrapper), `X` → `design/X.ui.qml` (pure design), `X` → `logic/X.qml` (pure logic, no design source).
 - Re-skinning native controls happens via a Qt Quick Controls 2 style module activated by `QQuickStyle::setStyle("YourStyle")`; never wrap a stock control in a `type:"custom"` re-implementation.
 )"_s);
