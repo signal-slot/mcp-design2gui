@@ -144,7 +144,7 @@ Review the child layers and classify them:
 
 - `embed` — keep the layer's own visuals (image / text / shape). Add `interactive: true` to make the layer tappable while preserving its visual content. **Embed is additive** — the layer's visual stays; hints decorate it.
 - `native` — replace the layer with a framework-provided stock control (`Switch`, `ComboBox`, `Button`, ...) chosen via `baseElement`. **Native is substitutive** — the layer's own visuals are dropped; the framework draws the control via its style. `baseElement: "TouchArea"` is a special native value that emits a bare touch region (`MouseArea` for QtQuick, `TouchArea` for Slint, the framework equivalent for other targets) with no visual content — use it for transparent / extended hit regions.
-- `custom` — emit the layer (and its descendants) as a separate reusable component file (e.g. `.ui.qml` for QtQuick, `.slint` for Slint, `.dart` for Flutter, `.swift` for SwiftUI, `.tsx` for React Native, `.xml` for LVGL).
+- `custom` — emit the layer (and its descendants) as a separate reusable component file (e.g. `.ui.qml` for QtQuick, `.slint` for Slint, `.dart` for Flutter, `.swift` for SwiftUI, `.tsx` for React Native, `.xml` for LVGL). `type:"custom"` **also accepts `baseElement`**: it selects the root element type of the generated component file. For the QtQuick exporter, the mapping is `Container` → `Item` (default), `TouchArea` → `MouseArea`, `Button` / `Button_Highlighted` → `Button`. Use `baseElement: "TouchArea"` on a `type:"custom"` screen folder when the entire extracted component should react to touch (e.g. a "tap-anywhere to advance / dismiss" screen). This is preferable to wrapping the screen from the logic side with a `MouseArea {}` child — the touch responsibility lives in the design surface where it belongs and survives re-export.
 - `merge` — composite the layer into a single image with its parent. **Do not set this manually**; the exporter applies it automatically to the layers consumed by `textSource` / `imageSource`.
 - `skip` — omit from export entirely (use for helper / guide / reference layers, or for duplicate frames of an already-extracted reusable component).
 
@@ -252,6 +252,8 @@ The design's text is the placeholder; logic code overrides it via `labelDeviceNa
 | `font` | font family / pixel size of a Text layer |
 | `image` | source image of an Image layer |
 
+**Important interaction — PSD/Figma-hidden layers with runtime-controlled visibility:** if a design layer is *hidden* in the source tool (PSD eye toggle off, Figma visibility off) and you want runtime control of its visibility, you **must** include `visible` in `properties`. With this combination, the exporter omits the literal `visible: false` it would otherwise emit, and the wrapper's binding (`foo.visible: appState.something`) actually takes effect. Without `properties: ["visible"]`, a hidden source layer always renders as a hardcoded `visible: false` in the generated file and any wrapper-side binding silently loses.
+
 `translatable` is **not** an alias — it changes the output template so the literal string is wrapped in `qsTr("...")` (QtQuick) or `@tr("...")` (Slint). Apply it to standalone Text layers, or to a Native Button whose caption comes via `textSource`:
 
 **Standalone Text layer:**
@@ -330,6 +332,16 @@ Use a **design/logic separation** pattern so re-export only ever touches the gen
 **Core principle — logic is owned by the component, not by the parent:**
 Each screen and each reusable widget owns its own logic in its own `logic/X.qml` wrapper. **Do not** funnel everything up into a single `Main.qml` that reaches into children with long property-alias chains (`mainWindow.statusBar.wifiToggle.checked: ...`). A button knows how to be a button; the screen that hosts it should not be wiring the button's internals.
 
+**Cross-cutting state belongs in a singleton, not in a parent.**
+Application-wide state — current route / screen, current user, theme, runtime feature flags, an in-progress form, accumulated input on a number-pad — goes in a `pragma Singleton` under `logic/` (typically `logic/AppState.qml`). Each wrapper reads / writes the singleton directly; nothing about screen B is wired into screen A's wrapper. The top-level shell does not coordinate screens via parent-side bindings, and one screen never drills into another screen's internals to advance navigation. Equivalents for other targets: a Riverpod / Provider notifier (Flutter), an `@Observable` model (SwiftUI), a Zustand store or React context (React Native), a `<global>` element (Slint), an `lv_subject_t` (LVGL).
+
+**Keep the top-level shell trivially thin.**
+For QtQuick that is the file that loads `Window {}` (typically `App.qml` / `main.qml`). It does two things only:
+1. provide framework-level chrome — window title, size, visibility, and the top-level navigation primitive (`StackView`, `Loader`, `SwipeView`, ...);
+2. instantiate the design's root composition once (`MainWindow { anchors.fill: parent }`).
+
+Per-screen layout, per-screen visibility logic, or coordinate values do **not** belong here. If you find yourself writing `ui.screen2.x = ...` or aggregating `ui.screenN.visible: ...` at the shell level, the visibility binding belongs in each screen's own wrapper (reading the singleton's current route) instead. Equivalents: `MaterialApp` home site (Flutter), top-level `WindowGroup` (SwiftUI), root component (React Native), Slint's `MainWindow` instantiation site (Slint).
+
 **Recommended project structure (QML example):**
 ```
 qml/
@@ -360,26 +372,8 @@ ButtonPower      1.0 design/ButtonPower.ui.qml
 LeftWindow       1.0 logic/LeftWindow.qml
 ```
 
-**Qt 6 / `qt_add_qml_module` wiring — two qmldir files are required.**
-The single qmldir above is the *module* qmldir, but it is not enough on its own. When `design/MainWindow.ui.qml` says `Header { ... }`, Qt 6's QML resolver runs a same-directory scan first and would auto-register the sibling `design/Header.ui.qml` as `Header`, hiding the logic wrapper. To make the public-name reference actually land on the logic wrapper, ship a **design overlay qmldir** alongside the design files that re-points the bare name back to `logic/`:
-
-```
-# (1) Module qmldir, deployed at qrc:/<URI>/qmldir
-/qmldir
-  module <URI>
-  HeaderUI 1.0 qml/design/Header.ui.qml
-  Header   1.0 qml/logic/Header.qml
-  ...
-
-# (2) Design overlay — source file lives OUTSIDE design/ but is aliased into it at build time
-/qml/design_imports.qmldir
-  Header 1.0 ../logic/Header.qml
-  ...
-```
-
-Inside `design/MainWindow.ui.qml`, `Header { ... }` is now resolved by the **same-directory** overlay (an explicit qmldir entry in the file's own directory wins over Qt's basename auto-registration), so it lands on `../logic/Header.qml` — the logic wrapper.
-
-**Re-export-safety alias trick.** The overlay's source file lives outside `design/` (e.g. `qml/design_imports.qmldir`) so `do_export`, which only writes inside `design/`, cannot overwrite it. CMake aliases it onto the runtime path the resolver looks at:
+**Qt 6 / `qt_add_qml_module` wiring — module qmldir is auto-generated, you steer it via source-file properties + a design overlay.**
+The three patterns shown above describe the *result* — the registrations Qt 6 ends up with — but in a modern `qt_add_qml_module`-based project you do not hand-write the module qmldir at all. CMake generates it for you from per-file source-file properties. Two pieces are needed, and both are required: either alone fails.
 
 ```cmake
 qt_add_qml_module(myapp
@@ -388,13 +382,43 @@ qt_add_qml_module(myapp
         qml/design/MainWindow.ui.qml
         qml/design/Header.ui.qml
         qml/logic/Header.qml
-        ...
+        qml/logic/AppState.qml
     RESOURCES
         qml/design_imports.qmldir
 )
+
+# 1. Register the design file under "HeaderUI" so the bare "Header" name is left
+#    free for the logic wrapper. Without this, Qt 6 would register the .ui.qml
+#    as both "Header" (basename) and the explicit typename, and the resolver
+#    would see the .ui.qml first.
+set_source_files_properties(qml/design/Header.ui.qml
+    PROPERTIES
+        QT_QML_SOURCE_TYPENAME "HeaderUI"
+        QT_RESOURCE_ALIAS "design/Header.ui.qml")
+
+# 2. Logic wrapper auto-registers as "Header" from its filename — no setup needed.
+
+# 3. Singletons must be flagged so `pragma Singleton` actually takes effect.
+set_source_files_properties(qml/logic/AppState.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
+# 4. Design overlay — same-directory qmldir that re-points the bare "Header"
+#    reference from inside design/MainWindow.ui.qml back to the logic wrapper.
+#    Source lives OUTSIDE design/ so do_export cannot clobber it; CMake aliases
+#    it onto the runtime path the resolver checks.
 set_source_files_properties(qml/design_imports.qmldir
-    PROPERTIES QT_RESOURCE_ALIAS "qml/design/qmldir")
+    PROPERTIES QT_RESOURCE_ALIAS "design/qmldir")
 ```
+
+`qml/design_imports.qmldir` itself is a tiny file you hand-write and version-control:
+
+```
+Header 1.0 ../logic/Header.qml
+StatusBar 1.0 ../logic/StatusBar.qml
+...
+```
+
+**Why both pieces are required.** `QT_QML_SOURCE_TYPENAME` alone is not enough — even after renaming the explicit registration to `HeaderUI`, Qt 6's basename scan still auto-registers `Header` directly to the `.ui.qml` from its directory. The design overlay is what actually makes the bare-name reference inside `design/*.ui.qml` land on the logic wrapper: an explicit qmldir entry in the file's own directory wins over the basename scan. Conversely, the overlay alone, without the `QT_QML_SOURCE_TYPENAME` rename on the module-level registration, leaves you with two `Header` types and an ambiguous resolution. You need the rename **and** the overlay.
 
 At runtime the overlay is reachable as `qml/design/qmldir`; at build time it is a regular versioned file in `qml/`, untouched by re-export.
 
@@ -1144,11 +1168,11 @@ For every target, verify:
                                             "id (string, identifier for binding — empty string to clear); "
                                             "visible (bool, initial visibility of the layer); "
                                             "componentName (string, for type=custom — name of the generated reusable component type. Note: the parent's instance id is set by whoever embeds this component, not in the hint); "
-                                            "baseElement (string, for type=native — stock framework control. The QtQuick exporter maps each value to a QtQuick or QtQuick.Controls type: "
-                                            "Container (Item), TouchArea (MouseArea — invisible hit-only region; the layer's own visuals are NOT rendered), "
+                                            "baseElement (string — for type=native it selects a stock framework control, for type=custom it selects the root element type of the generated component file. The QtQuick exporter maps each value to a QtQuick or QtQuick.Controls type: "
+                                            "Container (Item), TouchArea (MouseArea — invisible hit-only region for type=native; component-wide tap target for type=custom; the layer's own visuals are NOT rendered when type=native), "
                                             "Button, Button_Highlighted (same Button type, but with highlighted:true / Slint primary:true — for the visually emphasized variant), "
-                                            "CheckBox, ComboBox, RadioButton, Slider, SpinBox, Switch, TabBar, TabButton. "
-                                            "Prefer type=native+baseElement whenever a Figma node corresponds to a stock UI control (toggle, dropdown, tab segment, numeric stepper, etc.) — let the design's visuals live in a Qt Quick Controls 2 style module activated via QQuickStyle::setStyle, instead of writing a type=custom wrapper that re-implements standard semantics like model/value/checked); "
+                                            "CheckBox, ComboBox, RadioButton, Slider, SpinBox, Switch, TabBar, TabButton (these stock controls are only meaningful with type=native). "
+                                            "Prefer type=native+baseElement whenever a Figma node corresponds to a stock UI control (toggle, dropdown, tab segment, numeric stepper, etc.) — let the design's visuals live in a Qt Quick Controls 2 style module activated via QQuickStyle::setStyle, instead of writing a type=custom wrapper that re-implements standard semantics like model/value/checked. Use type=custom+baseElement=TouchArea for screens / extracted components that should react to touch as a whole); "
                                             "interactive (bool, for type=embed — wraps the layer's rendered content in a MouseArea so the visual stays AND the region becomes tappable. Use this for icons/cards that should react to touch. Distinct from type=native+baseElement=TouchArea, which produces a bare MouseArea with no visual. Setting baseElement=TouchArea on any type also implies interactive=true); "
                                             "properties (array of strings — selects which design attributes are exposed as bindable property aliases on the parent component, so logic code can override the design's placeholder value at runtime. Vocabulary: visible, position (x/y), size (width/height), color, text, font, image. Special: translatable (not an alias — wraps the layer's text literal in qsTr(\"...\") for QtQuick or @tr(\"...\") for Slint; applies to standalone Text layers and to a Native Button whose caption comes from a textSource layer)); "
                                             "textSource (string, for type=native baseElement=Button/Button_Highlighted — name of a sibling text layer whose string becomes the Button's text. Use this instead of leaving the caption as a separate embed and assigning btn.text from logic code: with textSource, the design's text changes flow straight to the .ui.qml on re-export); "
