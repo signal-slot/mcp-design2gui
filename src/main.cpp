@@ -442,7 +442,9 @@ Item {
 
 **Logic wrapper** (`logic/HomeScreen.qml`) inherits from the matching `XUI` and wires behavior using **declarative QML only** (no imperative wiring):
 ```qml
-import QtQuick
+import QtQuick                          // needed here for State / Transition / NumberAnimation below;
+                                        // a simpler wrapper that only does bindings + Timer + Connections
+                                        // + JS can use `import QtQml` instead (smaller dependency surface)
 import MyApp                            // project module is fine in logic/
 
 HomeScreenUI {
